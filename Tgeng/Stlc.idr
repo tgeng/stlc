@@ -55,13 +55,21 @@ substitute i s (DbAbs t str) = DbAbs (substitute (S i) (raise Z s) t) str
 substitute i s (DbApp t1 t2) = DbApp (substitute i s t1) (substitute i s t2)
 
 export
-evaluate : Fuel -> DbTerm -> DbTerm
-evaluate (More fuel) (DbApp t1 t2) = let t1' = (evaluate fuel t1) in
-                                     let t2' = (evaluate fuel t2) in
-                                         case t1' of
-                                              (DbAbs t str) => reduce Z $ substitute Z t2' t
-                                              t1' => DbApp t1' t2'
-evaluate fuel t = t
+isNormal: DbTerm -> Bool
+isNormal (DbVar k) = True
+isNormal (DbAbs x y) = True
+isNormal (DbApp x y) = False
+
+export
+evaluate : DbTerm -> DbTerm
+evaluate (DbApp t1 t2) = if isNormal t1
+                         then if isNormal t2
+                              then case t1 of
+                                  (DbAbs t str) => reduce Z $ substitute Z t2 t
+                                  t1 => DbApp t1 t2
+                              else DbApp t1 (evaluate t2)
+                         else DbApp (evaluate t1) t2
+evaluate t = t
 
 findNewName : List String -> String -> String
 findNewName names name = let similarNames = sort $ filter isSimilar names in
