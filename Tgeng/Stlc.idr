@@ -64,7 +64,17 @@ evaluate (More fuel) (DbApp t1 t2) = let t1' = (evaluate fuel t1) in
 evaluate fuel t = t
 
 findNewName : List String -> String -> String
-findNewName xs x = x ++ (show $ length xs)
+findNewName names name = let similarNames = sort $ filter isSimilar names in
+                             findGap Z similarNames
+                             where isSimilar : String -> Bool
+                                   isSimilar n = isPrefixOf name n &&
+                                                 let suffix = drop (length name) $ unpack n in
+                                                     all (== ''') suffix
+                                   findGap : Nat -> List String -> String
+                                   findGap l [] = name ++ (pack (replicate l '\''))
+                                   findGap l (n :: ns) = if l + (length name) == (length n)
+                                                            then findGap (S l) ns
+                                                            else name ++ (pack (replicate l '\''))
 
 export
 toTerm : List String -> DbTerm -> Either String Term
