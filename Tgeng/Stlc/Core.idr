@@ -1,4 +1,4 @@
-module Tgeng.Stlc
+module Tgeng.Stlc.Core
 
 import Decidable.Order
 import Data.Fuel
@@ -98,11 +98,11 @@ toTerm env (DbApp dt1 dt2) = do t1 <- toTerm env dt1
 
 Show Term where
   show (Var n) = n
-  show (Abs n t) = "/" ++ n ++ ". " ++ (show t)
+  show (Abs n t) = "\\" ++ n ++ ". " ++ (show t)
   show (App t1 t2) = "(" ++ (show t1) ++ (show t2) ++")"
 
 Show DbTerm where
   show (DbVar i) = show i
-  show (DbAbs t str) = "/0" ++ ":" ++ str ++". " ++ (show t)
+  show (DbAbs t str) = "\\0" ++ ":" ++ str ++". " ++ (show t)
   show (DbApp t1 t2) = "(" ++ (show t1) ++ (show t2) ++")"
 
