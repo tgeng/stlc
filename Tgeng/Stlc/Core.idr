@@ -38,14 +38,14 @@ toDbTerm env (App t1 t2) = do dt1 <- toDbTerm env t1
                               dt2 <- toDbTerm env t2
                               Right $ DbApp dt1 dt2
 
-reductVar : (contra : LTE k i -> Void) -> DbTerm
-reductVar {k = Z} contra = void $ contra $ LTEZero
-reductVar {k = (S k)} contra = DbVar k
+reduceVar : (contra : LTE k i -> Void) -> DbTerm
+reduceVar {k = Z} contra = void $ contra $ LTEZero
+reduceVar {k = (S k)} contra = DbVar k
 
 reduce : Nat -> DbTerm -> DbTerm
 reduce i ori@(DbVar k) = case decideLTE k i of
                         (Yes prf) => ori
-                        (No contra) => reductVar contra
+                        (No contra) => reduceVar contra
 reduce i (DbAbs t str) = DbAbs (reduce (S i) t) str
 reduce i (DbApp t1 t2) = DbApp (reduce i t1) (reduce i t2)
 
@@ -56,7 +56,7 @@ substitute i s (DbApp t1 t2) = DbApp (substitute i s t1) (substitute i s t2)
 
 export
 isNormal: DbTerm -> Bool
-isNormal (DbVar k) = True
+isNormal (DbVar k) = False
 isNormal (DbAbs x y) = True
 isNormal (DbApp x y) = False
 

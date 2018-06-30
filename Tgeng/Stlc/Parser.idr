@@ -33,9 +33,12 @@ mutual
   expr : Parser Term
   expr = map app_terms (single `sepBy` spaces) <?> "expr"
 
+statement : Parser Term
+statement = expr <* eof
+
 main : IO ()
 main = do input <- getLine
-          let Right t = parse expr input
+          let Right t = parse statement input
             | Left error => do putStrLn error
                                main
           putStrLn $ show t
