@@ -96,13 +96,15 @@ toTerm env (DbApp dt1 dt2) = do t1 <- toTerm env dt1
                                 t2 <- toTerm env dt2
                                 Right $ App t1 t2
 
+export
 Show Term where
   show (Var n) = n
-  show (Abs n t) = "\\" ++ n ++ ". " ++ (show t)
-  show (App t1 t2) = "(" ++ (show t1) ++ (show t2) ++")"
+  show (Abs n t) = "\\" ++ n ++ "." ++ show t
+  show (App t1 t2) = "(" ++ show t1 ++ ") " ++ show t2
 
+export
 Show DbTerm where
   show (DbVar i) = show i
-  show (DbAbs t str) = "\\0" ++ ":" ++ str ++". " ++ (show t)
-  show (DbApp t1 t2) = "(" ++ (show t1) ++ (show t2) ++")"
+  show (DbAbs t str) = "\\0" ++ ":" ++ str ++". " ++ show t
+  show (DbApp t1 t2) = "(" ++ show t1 ++ show t2 ++")"
 
