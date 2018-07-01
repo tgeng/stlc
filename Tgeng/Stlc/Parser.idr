@@ -4,14 +4,16 @@ import Tgeng.Stlc.Core
 import Lightyear
 import Lightyear.Strings
 import Lightyear.Char
+import Control.Monad.State
 
 identifier : Parser String
 identifier = map pack $ map (::) letter <*> many (alphaNum <|> char '\'') <?> "identifier"
 
-app_terms : List Term -> Term
-app_terms (x :: []) = x
-app_terms (x :: (y :: xs)) = let t = App x y in
-                                     app_terms (t :: xs)
+app_terms : List Term -> Maybe Term
+app_terms [] = Nothing
+app_terms (x :: []) = Just x
+app_terms (x :: (y :: xs)) = do let t = App x y
+                                app_terms (t :: xs)
 
 var : Parser Term
 var = map Var identifier <?> "var"
@@ -31,16 +33,20 @@ mutual
   single = var <|>| abs <|>| group <?> "single"
 
   expr : Parser Term
-  expr = map app_terms (single `sepBy` spaces) <?> "expr"
+  expr = do app_t <- map app_terms (single `sepBy` spaces)
+            case app_t of
+              Just t => pure t
+              Nothing => fail "not enough term to form an expression"
+         <?> "expr"
 
 statement : Parser Term
 statement = expr <* eof
 
-main : IO ()
-main = do input <- getLine
+echo : IO ()
+echo = do input <- getLine
           let Right t = parse statement input
             | Left error => do putStrLn error
-                               main
+                               echo
           putStrLn $ show t
-          main
+          echo
 

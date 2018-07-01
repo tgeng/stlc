@@ -10,7 +10,7 @@ data Term = Var String
           | Abs String Term
           | App Term Term
 
-export
+public export
 data DbTerm = DbVar Nat
           | DbAbs DbTerm String
           | DbApp DbTerm DbTerm
@@ -54,22 +54,44 @@ substitute i s ori@(DbVar k) = if i == k then s else ori
 substitute i s (DbAbs t str) = DbAbs (substitute (S i) (raise Z s) t) str
 substitute i s (DbApp t1 t2) = DbApp (substitute i s t1) (substitute i s t2)
 
-export
-isNormal: DbTerm -> Bool
-isNormal (DbVar k) = False
-isNormal (DbAbs x y) = True
-isNormal (DbApp x y) = False
+public export
+data IsNormal : DbTerm -> Type where
+  Mk : IsNormal $ DbAbs x y
+
+dbVarNotNormal : IsNormal (DbVar k) -> Void
+dbVarNotNormal Mk impossible
+
+dbAppNotNormal : IsNormal (DbApp x y) -> Void
+dbAppNotNormal Mk impossible
+
+decNormal : (t: DbTerm) -> Dec (IsNormal t)
+decNormal (DbVar k) = No dbVarNotNormal
+decNormal (DbAbs x y) = Yes Mk
+decNormal (DbApp x y) = No dbAppNotNormal
+
+evaluate_app : (prf : IsNormal t) -> DbTerm -> DbTerm
+evaluate_app {t = (DbAbs s _)} Mk t' = reduce Z $ substitute Z s t'
 
 export
-evaluate : DbTerm -> DbTerm
-evaluate (DbApp t1 t2) = if isNormal t1
-                         then if isNormal t2
-                              then case t1 of
-                                  (DbAbs t str) => reduce Z $ substitute Z t2 t
-                                  t1 => DbApp t1 t2
-                              else DbApp t1 (evaluate t2)
-                         else DbApp (evaluate t1) t2
-evaluate t = t
+evaluate : List DbTerm -> (t :DbTerm) -> Not (IsNormal t) -> DbTerm
+evaluate env ori@(DbVar k) _ = fromMaybe ori $ index' k env
+evaluate env (DbAbs _ _) notNormal = void $ notNormal Mk
+evaluate env ori@(DbApp t1 t2) _ = case decNormal t1 of
+                                    (No contra) => DbApp (evaluate env t1 contra) t2
+                                    (Yes prf) => case decNormal t2 of
+                                                       (No contra) => DbApp t1 (evaluate env t2 contra)
+                                                       (Yes _) => evaluate_app prf t2
+
+{- export -}
+{- evaluate : DbTerm -> DbTerm -}
+{- evaluate (DbApp t1 t2) = if isNormal t1 -}
+{-                          then if isNormal t2 -}
+{-                               then case t1 of -}
+{-                                   (DbAbs t str) => reduce Z $ substitute Z t2 t -}
+{-                                   t1 => DbApp t1 t2 -}
+{-                               else DbApp t1 (evaluate t2) -}
+{-                          else DbApp (evaluate t1) t2 -}
+{- evaluate t = t -}
 
 findNewName : List String -> String -> String
 findNewName names name = let similarNames = sort $ filter isSimilar names in
