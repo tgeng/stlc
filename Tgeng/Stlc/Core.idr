@@ -17,7 +17,7 @@ data DbTerm = DbVar Nat
 
 lookUp : List (String, DbTerm) -> String -> Maybe DbTerm
 lookUp [] name = Nothing
-lookUp ((name', dt) :: xs) name = if name' == name then Just dt else Nothing
+lookUp ((name', dt) :: xs) name = if name' == name then Just dt else lookUp xs name
 
 raise : Nat -> DbTerm -> DbTerm
 raise threshold ori@(DbVar i) = if i >= threshold then DbVar (S i) else ori
@@ -30,7 +30,7 @@ raiseEnv = map (\(name, dt) => (name, raise Z dt))
 export
 toDbTerm : List (String, DbTerm) -> Term -> Either String DbTerm
 toDbTerm env (Var name) = case lookUp env name of
-                               Nothing => Left $ "Cannot find bining for '"++ name ++"'."
+                               Nothing => Left $ "Cannot find binding for '"++ name ++"'."
                                (Just dt) => Right dt
 toDbTerm env (Abs name t) = do dt <- toDbTerm ((name, DbVar Z)::(raiseEnv env)) t
                                Right $ DbAbs dt name
@@ -70,7 +70,7 @@ decNormal (DbAbs x y) = Yes Mk
 decNormal (DbApp x y) = No dbAppNotNormal
 
 evaluate_app : (prf : IsNormal t) -> DbTerm -> DbTerm
-evaluate_app {t = (DbAbs s _)} Mk t' = reduce Z $ substitute Z s t'
+evaluate_app {t = (DbAbs t' _)} Mk s = reduce Z $ substitute Z s t'
 
 export
 evaluate : List DbTerm -> (t :DbTerm) -> Not (IsNormal t) -> DbTerm
@@ -82,16 +82,11 @@ evaluate env ori@(DbApp t1 t2) _ = case decNormal t1 of
                                                        (No contra) => DbApp t1 (evaluate env t2 contra)
                                                        (Yes _) => evaluate_app prf t2
 
-{- export -}
-{- evaluate : DbTerm -> DbTerm -}
-{- evaluate (DbApp t1 t2) = if isNormal t1 -}
-{-                          then if isNormal t2 -}
-{-                               then case t1 of -}
-{-                                   (DbAbs t str) => reduce Z $ substitute Z t2 t -}
-{-                                   t1 => DbApp t1 t2 -}
-{-                               else DbApp t1 (evaluate t2) -}
-{-                          else DbApp (evaluate t1) t2 -}
-{- evaluate t = t -}
+export
+evaluate' : DbTerm -> DbTerm
+evaluate' t = case decNormal t of
+                   (Yes prf) => t
+                   (No contra) => evaluate [] t contra
 
 findNewName : List String -> String -> String
 findNewName names name = let similarNames = sort $ filter isSimilar names in
@@ -122,7 +117,7 @@ export
 Show Term where
   show (Var n) = n
   show (Abs n t) = "\\" ++ n ++ "." ++ show t
-  show (App t1 t2) = "(" ++ show t1 ++ ") " ++ show t2
+  show (App t1 t2) = "(" ++ show t1 ++ " " ++ show t2 ++ ")"
 
 export
 Show DbTerm where

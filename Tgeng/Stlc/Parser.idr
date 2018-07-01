@@ -9,11 +9,11 @@ import Control.Monad.State
 identifier : Parser String
 identifier = map pack $ map (::) letter <*> many (alphaNum <|> char '\'') <?> "identifier"
 
-app_terms : List Term -> Maybe Term
-app_terms [] = Nothing
-app_terms (x :: []) = Just x
-app_terms (x :: (y :: xs)) = do let t = App x y
-                                app_terms (t :: xs)
+appTerms : List Term -> Maybe Term
+appTerms [] = Nothing
+appTerms (x :: []) = Just x
+appTerms (x :: (y :: xs)) = do let t = App x y
+                               appTerms (t :: xs)
 
 var : Parser Term
 var = map Var identifier <?> "var"
@@ -33,7 +33,7 @@ mutual
   single = var <|>| abs <|>| group <?> "single"
 
   expr : Parser Term
-  expr = do app_t <- map app_terms (single `sepBy` spaces)
+  expr = do app_t <- map appTerms (single `sepBy` spaces)
             case app_t of
               Just t => pure t
               Nothing => fail "not enough term to form an expression"
@@ -50,3 +50,34 @@ echo = do input <- getLine
           putStrLn $ show t
           echo
 
+mutual
+  usePrevInput : StateT (Maybe DbTerm) IO ()
+  usePrevInput = do Just t <- get
+                    | Nothing => simpleEval
+                    let t' = evaluate' t
+                    put $ Just t'
+                    let Right st = toTerm [] t'
+                    | Left msg => do lift $ putStrLn msg
+                                     simpleEval
+                    lift $ putStrLn $ show st
+                    simpleEval
+
+  handleNewInput : String -> StateT (Maybe DbTerm) IO ()
+  handleNewInput input = do let Right st = parse statement input
+                            | Left error => do lift $ putStrLn error
+                                               simpleEval
+                            lift $ putStrLn $ show st
+                            let Right t = toDbTerm [] st
+                            | Left error => do lift $ putStrLn error
+                                               simpleEval
+                            put $ Just t
+                            simpleEval
+
+  simpleEval : StateT (Maybe DbTerm) IO ()
+  simpleEval = do input <- lift getLine
+                  if input == ""
+                     then usePrevInput
+                     else handleNewInput input
+
+eval : IO ()
+eval = map fst $ runStateT simpleEval Nothing
