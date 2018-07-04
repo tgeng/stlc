@@ -97,7 +97,7 @@ decNormal (DbBinop _ _ _) = No DbBinopNotNormal
 
 evaluate_app : (prf : IsNormal t) -> DbTerm -> DbTerm
 evaluate_app {t = (DbAbs t' _)} MkAbs s = reduce Z $ substitute Z s t'
-evaluate_app {t = (DbNum _)} MkNum s = s
+evaluate_app {t = t@(DbNum _)} MkNum s = DbApp t s
 
 
 evaluate_binop : (op : Op) -> (prf1 : IsNormal t1) -> (prf2 : IsNormal t2) -> DbTerm
