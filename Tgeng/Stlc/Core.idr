@@ -101,28 +101,31 @@ evaluate_app {t = t@(DbNum _)} MkNum s = DbApp t s
 
 
 evaluate_binop : (op : Op) -> (prf1 : IsNormal t1) -> (prf2 : IsNormal t2) -> DbTerm
-evaluate_binop {t1 = (DbNum i1)} {t2 = (DbNum i2)} op MkNum MkNum = case op of
-                                                                         Add => DbNum $ i1 + i2
-                                                                         Sub => DbNum $ i1 - i2
-                                                                         Mul => DbNum $ i1 * i2
-                                                                         Div => DbNum $ i1 / i2
+evaluate_binop {t1 = (DbNum i1)} {t2 = (DbNum i2)} op MkNum MkNum =
+  case op of
+    Add => DbNum $ i1 + i2
+    Sub => DbNum $ i1 - i2
+    Mul => DbNum $ i1 * i2
+    Div => DbNum $ i1 / i2
 evaluate_binop {t1} {t2} op _ _  = DbBinop op t1 t2
 
 export
 evaluate : List DbTerm -> (t :DbTerm) -> Not (IsNormal t) -> DbTerm
 evaluate env dbVar@(DbVar k) _ = fromMaybe dbVar $ index' k env
 evaluate env (DbAbs _ _) notNormal = void $ notNormal MkAbs
-evaluate env (DbApp t1 t2) _ = case decNormal t1 of
-                                    (No contra) => DbApp (evaluate env t1 contra) t2
-                                    (Yes prf) => case decNormal t2 of
-                                                       (No contra) => DbApp t1 (evaluate env t2 contra)
-                                                       (Yes _) => evaluate_app prf t2
+evaluate env (DbApp t1 t2) _ =
+  case decNormal t1 of
+    (No contra) => DbApp (evaluate env t1 contra) t2
+    (Yes prf) => case decNormal t2 of
+                       (No contra) => DbApp t1 (evaluate env t2 contra)
+                       (Yes _) => evaluate_app prf t2
 evaluate env dbNum@(DbNum _) notNormal = void $ notNormal MkNum
-evaluate env (DbBinop op t1 t2) notNormal = case decNormal t1 of
-                                       (No contra) => DbBinop op (evaluate env t1 contra) t2
-                                       (Yes prf1) => case decNormal t2 of
-                                                         (No contra) => DbBinop op t1 (evaluate env t2 contra)
-                                                         (Yes prf2) => evaluate_binop op prf1 prf2
+evaluate env (DbBinop op t1 t2) notNormal =
+  case decNormal t1 of
+    (No contra) => DbBinop op (evaluate env t1 contra) t2
+    (Yes prf1) => case decNormal t2 of
+                      (No contra) => DbBinop op t1 (evaluate env t2 contra)
+                      (Yes prf2) => evaluate_binop op prf1 prf2
 
 export
 evaluate' : DbTerm -> DbTerm
@@ -131,17 +134,18 @@ evaluate' t = case decNormal t of
                    (No contra) => evaluate [] t contra
 
 findNewName : List String -> String -> String
-findNewName names name = let similarNames = sort $ filter isSimilar names in
-                             findGap Z similarNames
-                             where isSimilar : String -> Bool
-                                   isSimilar n = isPrefixOf name n &&
-                                                 let suffix = drop (length name) $ unpack n in
-                                                     all (== ''') suffix
-                                   findGap : Nat -> List String -> String
-                                   findGap l [] = name ++ (pack (replicate l '\''))
-                                   findGap l (n :: ns) = if l + (length name) == (length n)
-                                                            then findGap (S l) ns
-                                                            else name ++ (pack (replicate l '\''))
+findNewName names name =
+  let similarNames = sort $ filter isSimilar names in
+      findGap Z similarNames
+      where isSimilar : String -> Bool
+            isSimilar n = isPrefixOf name n &&
+                          let suffix = drop (length name) $ unpack n in
+                              all (== ''') suffix
+            findGap : Nat -> List String -> String
+            findGap l [] = name ++ (pack (replicate l '\''))
+            findGap l (n :: ns) = if l + (length name) == (length n)
+                                     then findGap (S l) ns
+                                     else name ++ (pack (replicate l '\''))
 
 export
 toTerm : List String -> DbTerm -> Either String Term
