@@ -55,12 +55,17 @@ div = char '/' *!> pure Div
 var : Parser Term
 var = map Var identifier <?> "var"
 
+partialBinop : Parser Op -> Parser Term -> Parser (Term -> Term)
+partialBinop opParser termParser = do op <- opParser
+                                      t <- termParser
+                                      pure $ \t' => Binop op t' t
+
 mutual
   abs : Parser Term
   abs = do char '\\' <* spaces
            i <- commitTo identifier
            spaces *> char '.' <* spaces
-           t <- commitTo single
+           t <- commitTo expr
            pure $ Abs i t
         <?> "abs"
 
@@ -70,12 +75,26 @@ mutual
   single : Parser Term
   single = number <|> var <|>| abs <|>| group <?> "single"
 
+  appExpr : Parser Term
+  appExpr = do Just t <- map appTerms (single `sepBy` spaces)
+               | Nothing => fail "not enough term to form an expression"
+               pure t
+            <?> "appExpr"
+
+  level9Expr : Parser Term
+  level9Expr = do t <- appExpr
+                  pts <- many $ partialBinop (spaces *> (mul <|> div) <* spaces) appExpr
+                  pure $ foldl (\t => \pt => pt t) t pts
+               <?> "level9Expr"
+
+  level8Expr : Parser Term
+  level8Expr = do t <- level9Expr
+                  pts <- many $ partialBinop (spaces *> (add <|> sub) <* spaces) level9Expr
+                  pure $ foldl (\t => \pt => pt t) t pts
+               <?> "level8Expr"
+
   expr : Parser Term
-  expr = do t' <- map appTerms (single `sepBy` (spaces))
-            case t' of
-              Just t => pure t
-              Nothing => fail "not enough term to form an expression"
-         <?> "expr"
+  expr = level8Expr <?> "expr"
 
 statement : Parser Term
 statement = expr <* eof
