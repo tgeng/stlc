@@ -9,15 +9,19 @@ public export
 data Op = Add | Sub | Mul | Div
 
 public export
+data Ty = TyArrow Ty Ty
+        | TyDouble
+
+public export
 data Term = Var String
-          | Abs String Term
+          | Abs String Term Ty
           | App Term Term
           | Num Double
           | Binop Op Term Term
 
 public export
 data DbTerm = DbVar Nat
-          | DbAbs DbTerm String
+          | DbAbs String DbTerm Ty
           | DbApp DbTerm DbTerm
           | DbNum Double
           | DbBinop Op DbTerm DbTerm
@@ -28,7 +32,7 @@ lookUp ((name', dt) :: xs) name = if name' == name then Just dt else lookUp xs n
 
 raise : Nat -> DbTerm -> DbTerm
 raise threshold dbVar@(DbVar i) = if i >= threshold then DbVar (S i) else dbVar
-raise threshold (DbAbs t str) = DbAbs (raise (S threshold) t) str
+raise threshold (DbAbs str t ty) = DbAbs str (raise (S threshold) t) ty
 raise threshold (DbApp t1 t2) = DbApp (raise threshold t1) (raise threshold t2)
 raise threshold dbNum@(DbNum i) = dbNum
 raise threshold (DbBinop op t1 t2) = DbBinop op (raise threshold t1) (raise threshold t2)
@@ -41,8 +45,8 @@ toDbTerm : List (String, DbTerm) -> Term -> Either String DbTerm
 toDbTerm env (Var name) = case lookUp env name of
                                Nothing => Left $ "Cannot find binding for '"++ name ++"'."
                                (Just dt) => Right dt
-toDbTerm env (Abs name t) = do dt <- toDbTerm ((name, DbVar Z)::(raiseEnv env)) t
-                               Right $ DbAbs dt name
+toDbTerm env (Abs name t ty) = do dt <- toDbTerm ((name, DbVar Z)::(raiseEnv env)) t
+                                  Right $ DbAbs name dt ty
 toDbTerm env (App t1 t2) = do dt1 <- toDbTerm env t1
                               dt2 <- toDbTerm env t2
                               Right $ DbApp dt1 dt2
@@ -59,22 +63,22 @@ reduce : Nat -> DbTerm -> DbTerm
 reduce i dbVar@(DbVar k) = case decideLTE k i of
                         (Yes prf) => dbVar
                         (No contra) => reduceVar contra
-reduce i (DbAbs t str) = DbAbs (reduce (S i) t) str
+reduce i (DbAbs str t ty) = DbAbs str (reduce (S i) t) ty
 reduce i (DbApp t1 t2) = DbApp (reduce i t1) (reduce i t2)
 reduce i dbNum@(DbNum _) = dbNum
 reduce i (DbBinop op t1 t2) = DbBinop op (reduce i t1) (reduce i t2)
 
 substitute : Nat -> DbTerm -> DbTerm -> DbTerm
 substitute i s dbVar@(DbVar k) = if i == k then s else dbVar
-substitute i s (DbAbs t str) = DbAbs (substitute (S i) (raise Z s) t) str
+substitute i s (DbAbs str t ty) = DbAbs str (substitute (S i) (raise Z s) t) ty
 substitute i s (DbApp t1 t2) = DbApp (substitute i s t1) (substitute i s t2)
 substitute i s dbNum@(DbNum _) = dbNum
 substitute i s (DbBinop op t1 t2) = DbBinop op (substitute i s t1) (substitute i s t2)
 
 public export
 data IsNormal : DbTerm -> Type where
-  MkAbs : IsNormal $ DbAbs x y
-  MkNum : IsNormal $ DbNum i
+  MkAbs : IsNormal $ DbAbs _ _ _
+  MkNum : IsNormal $ DbNum _
 
 dbVarNotNormal : IsNormal (DbVar _) -> Void
 dbVarNotNormal MkAbs impossible
@@ -90,13 +94,13 @@ DbBinopNotNormal MkNum impossible
 
 decNormal : (t: DbTerm) -> Dec (IsNormal t)
 decNormal (DbVar _) = No dbVarNotNormal
-decNormal (DbAbs _ _) = Yes MkAbs
+decNormal (DbAbs _ _ _) = Yes MkAbs
 decNormal (DbApp _ _) = No dbAppNotNormal
 decNormal (DbNum _) = Yes MkNum
 decNormal (DbBinop _ _ _) = No DbBinopNotNormal
 
 evaluate_app : (prf : IsNormal t) -> DbTerm -> DbTerm
-evaluate_app {t = (DbAbs t' _)} MkAbs s = reduce Z $ substitute Z s t'
+evaluate_app {t = (DbAbs _ t' _)} MkAbs s = reduce Z $ substitute Z s t'
 evaluate_app {t = t@(DbNum _)} MkNum s = DbApp t s
 
 
@@ -112,7 +116,7 @@ evaluate_binop {t1} {t2} op _ _  = DbBinop op t1 t2
 export
 evaluate : List DbTerm -> (t :DbTerm) -> Not (IsNormal t) -> DbTerm
 evaluate env dbVar@(DbVar k) _ = fromMaybe dbVar $ index' k env
-evaluate env (DbAbs _ _) notNormal = void $ notNormal MkAbs
+evaluate env (DbAbs _ _ _) notNormal = void $ notNormal MkAbs
 evaluate env (DbApp t1 t2) _ =
   case decNormal t1 of
     (No contra) => DbApp (evaluate env t1 contra) t2
@@ -152,9 +156,9 @@ toTerm : List String -> DbTerm -> Either String Term
 toTerm env (DbVar k) = case index' k env of
                             Nothing => Left ("Index " ++ (show k) ++ " cannot be found.")
                             (Just name) => Right $ Var name
-toTerm env (DbAbs dt str) = do let name = findNewName env str
-                               subTerm <- (toTerm (name :: env) dt)
-                               Right $ Abs name subTerm
+toTerm env (DbAbs str dt ty) = do let name = findNewName env str
+                                  subTerm <- (toTerm (name :: env) dt)
+                                  Right $ Abs name subTerm ty
 toTerm env (DbApp dt1 dt2) = do t1 <- toTerm env dt1
                                 t2 <- toTerm env dt2
                                 Right $ App t1 t2
@@ -171,9 +175,14 @@ Show Op where
   show Div = "/"
 
 export
+Show Ty where
+  show (TyArrow ty1 ty2) = "(" ++ show ty1 ++ "->" ++ show ty2 ++ ")"
+  show TyDouble = "Double"
+
+export
 Show Term where
   show (Var n) = n
-  show (Abs n t) = "\\" ++ n ++ "." ++ show t
+  show (Abs n t ty) = "\\" ++ n ++ ":" ++ show ty ++ "." ++ show t
   show (App t1 t2) = "(" ++ show t1 ++ " " ++ show t2 ++ ")"
   show (Num i) = show i
   show (Binop op t1 t2) = "(" ++ show t1 ++ show op ++ show t2 ++ ")"
@@ -181,7 +190,7 @@ Show Term where
 export
 Show DbTerm where
   show (DbVar i) = "#" ++ show i
-  show (DbAbs t str) = "\\0" ++ "%" ++ str ++". " ++ show t
+  show (DbAbs str t ty) = "\\0" ++ "%" ++ str ++ ":" ++ show ty ++"." ++ show t
   show (DbApp t1 t2) = "(" ++ show t1 ++ show t2 ++")"
   show (DbNum i) = show i
   show (DbBinop op t1 t2) = "(" ++ show t1 ++ show op ++ show t2 ++ ")"

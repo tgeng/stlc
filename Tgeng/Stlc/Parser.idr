@@ -60,13 +60,34 @@ partialBinop opParser termParser = do op <- opParser
                                       t <- termParser
                                       pure $ \t' => Binop op t' t
 
+primitiveTy : Parser Ty
+primitiveTy = string "Double" *!> pure TyDouble
+
+mutual
+  tyElem : Parser Ty
+  tyElem = primitiveTy
+           <|>| (char '(' *> spaces *!> tyExpr <* spaces <* char ')')
+           <?> "tyElem"
+
+  tyExpr : Parser Ty
+  tyExpr = do tys <- tyElem `sepBy` (spaces *> string "->" <* spaces)
+              let Just ty = foldr combine Nothing tys
+              | Nothing => fail "Not enough type for type expression"
+              pure ty
+           where combine : Ty -> Maybe Ty -> Maybe Ty
+                 combine ty maybeTy = case maybeTy of
+                                           Nothing => Just ty
+                                           (Just accTy) => Just $ TyArrow ty accTy
+
 mutual
   abs : Parser Term
   abs = do char '\\' <* spaces
            i <- commitTo identifier
+           spaces *> char ':' <* spaces
+           ty <- commitTo tyExpr
            spaces *> char '.' <* spaces
            t <- commitTo expr
-           pure $ Abs i t
+           pure $ Abs i t ty
         <?> "abs"
 
   group : Parser Term
