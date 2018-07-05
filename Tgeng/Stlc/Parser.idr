@@ -137,7 +137,11 @@ mutual
                     let Right st = toTerm [] t'
                     | Left msg => do lift $ putStrLn msg
                                      simpleEval
-                    lift $ putStrLn $ show st
+                    let eitherTy = findType [] t
+                    let tyMsg = case eitherTy of
+                                     Right ty => show ty
+                                     Left msg => msg
+                    lift $ putStrLn $ show st ++ " : " ++ tyMsg
                     simpleEval
 
   handleNewInput : String -> StateT (Maybe DbTerm) IO ()

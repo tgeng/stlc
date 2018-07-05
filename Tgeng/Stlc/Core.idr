@@ -8,9 +8,29 @@ import Data.Fuel
 public export
 data Op = Add | Sub | Mul | Div
 
+export
+Show Op where
+  show Add = "+"
+  show Sub = "-"
+  show Mul = "*"
+  show Div = "/"
+
 public export
 data Ty = TyArrow Ty Ty
         | TyDouble
+
+export
+Eq Ty where
+  (==) (TyArrow x y) (TyArrow z w) = x==z && y==w
+  (==) (TyArrow x y) TyDouble = False
+  (==) TyDouble (TyArrow x y) = False
+  (==) TyDouble TyDouble = True
+
+export
+Show Ty where
+  show (TyArrow ty1 ty2) = "(" ++ show ty1 ++ "->" ++ show ty2 ++ ")"
+  show TyDouble = "Double"
+
 
 public export
 data Term = Var String
@@ -168,16 +188,26 @@ toTerm env (DbBinop op dt1 dt2) = do t1 <- toTerm env dt1
                                      Right $ Binop op t1 t2
 
 export
-Show Op where
-  show Add = "+"
-  show Sub = "-"
-  show Mul = "*"
-  show Div = "/"
-
-export
-Show Ty where
-  show (TyArrow ty1 ty2) = "(" ++ show ty1 ++ "->" ++ show ty2 ++ ")"
-  show TyDouble = "Double"
+findType : List Ty -> DbTerm -> Either String Ty
+findType tys (DbVar k) = case index' k tys of
+                              Nothing => Left $ "No binding for " ++ show k
+                              Just t => Right t
+findType tys (DbAbs _ t ty) = case findType (ty::tys) t of
+                                Right bodyTy => Right $ TyArrow ty bodyTy
+                                Left msg => Left msg
+findType tys (DbApp t1 t2) = do ty1 <- findType tys t1
+                                ty2 <- findType tys t2
+                                (case ty1 of
+                                      TyArrow ty2' ty3 => if ty2 == ty2'
+                                                          then Right ty3
+                                                          else Left $ "Type mismatch between " ++ show ty2 ++ " and " ++ show ty2'
+                                      TyDouble => Left "Cannot apply to a double")
+findType tys (DbNum x) = Right TyDouble
+findType tys (DbBinop op t1 t2) = do ty1 <- findType tys t1
+                                     ty2 <- findType tys t2
+                                     if ty1 == TyDouble && ty2 == TyDouble
+                                     then Right TyDouble
+                                     else Left $ "Type mismatch for operator " ++ show op
 
 export
 Show Term where
