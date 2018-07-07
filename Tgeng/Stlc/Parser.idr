@@ -1,13 +1,24 @@
 module Tgeng.Stlc.Parser
 
+import Data.List
 import Tgeng.Stlc.Core
 import Lightyear
 import Lightyear.Strings
 import Lightyear.Char
 import Control.Monad.State
 
+keywords : List String
+keywords = ["let", "in"]
+
+reserved : String -> Parser ()
+reserved kw = string kw *> requireFailure alphaNum
+
 identifier : Parser String
-identifier = map pack $ map (::) letter <*> many (alphaNum <|> char '\'') <?> "identifier"
+identifier = do name <- map pack $ map (::) letter <*> many (alphaNum <|> char '\'')
+                case isElem name keywords of
+                     (Yes prf) => fail $ "Keyword " ++ name ++ " cannot be an identifier."
+                     (No contra) => pure name
+             <?> "identifier"
 
 appTerms : List Term -> Maybe Term
 appTerms [] = Nothing
@@ -90,11 +101,21 @@ mutual
            pure $ Abs i t ty
         <?> "abs"
 
+  letBinding : Parser Term
+  letBinding = do reserved "let"
+                  name <- spaces *!> identifier
+                  spaces *> char '='
+                  s <- spaces *!> expr
+                  spaces *> reserved "in"
+                  t <- spaces *!> expr
+                  pure $ Let name s t
+               <?> "letBinding"
+
   group : Parser Term
   group = char '(' *> spaces *!> expr <* spaces <* char ')' <?> "group"
 
   single : Parser Term
-  single = number <|> var <|>| abs <|>| group <?> "single"
+  single = number <|> var <|>| abs <|>| letBinding <|>| group <?> "single"
 
   appExpr : Parser Term
   appExpr = do Just t <- map appTerms (single `sepBy` spaces)

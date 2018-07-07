@@ -36,6 +36,7 @@ public export
 data Term = Var String
           | Abs String Term Ty
           | App Term Term
+          | Let String Term Term
           | Num Double
           | Binop Op Term Term
 
@@ -43,6 +44,7 @@ public export
 data DbTerm = DbVar Nat
           | DbAbs String DbTerm Ty
           | DbApp DbTerm DbTerm
+          | DbLet String DbTerm DbTerm
           | DbNum Double
           | DbBinop Op DbTerm DbTerm
 
@@ -54,6 +56,7 @@ raise : Nat -> DbTerm -> DbTerm
 raise threshold dbVar@(DbVar i) = if i >= threshold then DbVar (S i) else dbVar
 raise threshold (DbAbs str t ty) = DbAbs str (raise (S threshold) t) ty
 raise threshold (DbApp t1 t2) = DbApp (raise threshold t1) (raise threshold t2)
+raise threshold (DbLet name s t) = DbLet name (raise threshold s) (raise (S threshold) t)
 raise threshold dbNum@(DbNum i) = dbNum
 raise threshold (DbBinop op t1 t2) = DbBinop op (raise threshold t1) (raise threshold t2)
 
@@ -70,6 +73,9 @@ toDbTerm env (Abs name t ty) = do dt <- toDbTerm ((name, DbVar Z)::(raiseEnv env
 toDbTerm env (App t1 t2) = do dt1 <- toDbTerm env t1
                               dt2 <- toDbTerm env t2
                               Right $ DbApp dt1 dt2
+toDbTerm env (Let name s t) = do ds <- toDbTerm env s
+                                 dt <- toDbTerm ((name, DbVar Z)::env) t
+                                 Right $ DbLet name ds dt
 toDbTerm env (Num i) = Right $ DbNum i
 toDbTerm env (Binop op t1 t2) = do dt1 <- toDbTerm env t1
                                    dt2 <- toDbTerm env t2
@@ -85,6 +91,7 @@ reduce i dbVar@(DbVar k) = case decideLTE k i of
                         (No contra) => reduceVar contra
 reduce i (DbAbs str t ty) = DbAbs str (reduce (S i) t) ty
 reduce i (DbApp t1 t2) = DbApp (reduce i t1) (reduce i t2)
+reduce i (DbLet name s t) = DbLet name (reduce i s) (reduce (S i) t)
 reduce i dbNum@(DbNum _) = dbNum
 reduce i (DbBinop op t1 t2) = DbBinop op (reduce i t1) (reduce i t2)
 
@@ -92,6 +99,7 @@ substitute : Nat -> DbTerm -> DbTerm -> DbTerm
 substitute i s dbVar@(DbVar k) = if i == k then s else dbVar
 substitute i s (DbAbs str t ty) = DbAbs str (substitute (S i) (raise Z s) t) ty
 substitute i s (DbApp t1 t2) = DbApp (substitute i s t1) (substitute i s t2)
+substitute i s (DbLet name s' t) = DbLet name (substitute i s s') (substitute (S i) (raise Z s) t)
 substitute i s dbNum@(DbNum _) = dbNum
 substitute i s (DbBinop op t1 t2) = DbBinop op (substitute i s t1) (substitute i s t2)
 
@@ -102,20 +110,21 @@ data IsNormal : DbTerm -> Type where
 
 dbVarNotNormal : IsNormal (DbVar _) -> Void
 dbVarNotNormal MkAbs impossible
-dbVarNotNormal MkNum impossible
 
 dbAppNotNormal : IsNormal (DbApp _ _) -> Void
 dbAppNotNormal MkAbs impossible
-dbAppNotNormal MkNum impossible
 
 DbBinopNotNormal : IsNormal (DbBinop _ _ _) -> Void
 DbBinopNotNormal MkAbs impossible
-DbBinopNotNormal MkNum impossible
+
+dbLetNotNormal : IsNormal (DbLet _ _ _) -> Void
+dbLetNotNormal MkAbs impossible
 
 decNormal : (t: DbTerm) -> Dec (IsNormal t)
 decNormal (DbVar _) = No dbVarNotNormal
 decNormal (DbAbs _ _ _) = Yes MkAbs
 decNormal (DbApp _ _) = No dbAppNotNormal
+decNormal (DbLet _ _ _) = No dbLetNotNormal
 decNormal (DbNum _) = Yes MkNum
 decNormal (DbBinop _ _ _) = No DbBinopNotNormal
 
@@ -143,6 +152,10 @@ evaluate env (DbApp t1 t2) _ =
     (Yes prf) => case decNormal t2 of
                        (No contra) => DbApp t1 (evaluate env t2 contra)
                        (Yes _) => evaluate_app prf t2
+evaluate env (DbLet name s t) notNormal =
+  case decNormal s of
+    (Yes _) => reduce Z $ substitute Z s t
+    (No contra) => DbLet name (evaluate env s contra) t
 evaluate env dbNum@(DbNum _) notNormal = void $ notNormal MkNum
 evaluate env (DbBinop op t1 t2) notNormal =
   case decNormal t1 of
@@ -182,6 +195,9 @@ toTerm env (DbAbs str dt ty) = do let name = findNewName env str
 toTerm env (DbApp dt1 dt2) = do t1 <- toTerm env dt1
                                 t2 <- toTerm env dt2
                                 Right $ App t1 t2
+toTerm env (DbLet name ds dt) = do s <- toTerm env ds
+                                   t <- toTerm (name::env) dt
+                                   Right $ Let name s t
 toTerm env (DbNum i) = Right $ Num i
 toTerm env (DbBinop op dt1 dt2) = do t1 <- toTerm env dt1
                                      t2 <- toTerm env dt2
@@ -202,6 +218,8 @@ findType tys (DbApp t1 t2) = do ty1 <- findType tys t1
                                                           then Right ty3
                                                           else Left $ "Type mismatch between " ++ show ty2 ++ " and " ++ show ty2'
                                       TyDouble => Left "Cannot apply to a double")
+findType tys (DbLet name s t) = do ty1 <- findType tys s
+                                   findType (ty1::tys) t
 findType tys (DbNum x) = Right TyDouble
 findType tys (DbBinop op t1 t2) = do ty1 <- findType tys t1
                                      ty2 <- findType tys t2
@@ -214,6 +232,7 @@ Show Term where
   show (Var n) = n
   show (Abs n t ty) = "\\" ++ n ++ ":" ++ show ty ++ "." ++ show t
   show (App t1 t2) = "(" ++ show t1 ++ " " ++ show t2 ++ ")"
+  show (Let name s t) = "let " ++ name ++ "=" ++ show s ++ " in " ++ show t
   show (Num i) = show i
   show (Binop op t1 t2) = "(" ++ show t1 ++ show op ++ show t2 ++ ")"
 
@@ -222,5 +241,6 @@ Show DbTerm where
   show (DbVar i) = "#" ++ show i
   show (DbAbs str t ty) = "\\0" ++ "%" ++ str ++ ":" ++ show ty ++"." ++ show t
   show (DbApp t1 t2) = "(" ++ show t1 ++ show t2 ++")"
+  show (DbLet name s t) = "let #0%" ++ name ++ "=" ++ show s ++ " in " ++ show t
   show (DbNum i) = show i
   show (DbBinop op t1 t2) = "(" ++ show t1 ++ show op ++ show t2 ++ ")"
