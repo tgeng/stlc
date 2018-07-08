@@ -1,5 +1,6 @@
 module Tgeng.Stlc.Parser
 
+import Data.Fuel
 import Data.List
 import Tgeng.Stlc.Core
 import Lightyear
@@ -138,12 +139,12 @@ mutual
   expr : Parser Term
   expr = level8Expr <?> "expr"
 
-statement : Parser Term
-statement = expr <* eof
+program : Parser Term
+program = expr <* spaces <* eof
 
 echo : IO ()
 echo = do input <- getLine
-          let Right t = parse statement input
+          let Right t = parse program input
             | Left error => do putStrLn error
                                echo
           putStrLn $ show t
@@ -152,35 +153,65 @@ echo = do input <- getLine
 mutual
   usePrevInput : StateT (Maybe DbTerm) IO ()
   usePrevInput = do Just t <- get
-                    | Nothing => simpleEval
+                    | Nothing => smallEval
                     let t' = evaluate' t
                     put $ Just t'
                     let Right st = toTerm [] t'
                     | Left msg => do lift $ putStrLn msg
-                                     simpleEval
+                                     smallEval
                     let eitherTy = findType [] t
                     let tyMsg = case eitherTy of
                                      Right ty => show ty
                                      Left msg => msg
                     lift $ putStrLn $ show st ++ " : " ++ tyMsg
-                    simpleEval
+                    smallEval
 
   handleNewInput : String -> StateT (Maybe DbTerm) IO ()
-  handleNewInput input = do let Right st = parse statement input
+  handleNewInput input = do let Right st = parse program input
                             | Left error => do lift $ putStrLn error
-                                               simpleEval
+                                               smallEval
                             lift $ putStrLn $ show st
                             let Right t = toDbTerm [] st
                             | Left error => do lift $ putStrLn error
-                                               simpleEval
+                                               smallEval
                             put $ Just t
-                            simpleEval
+                            smallEval
 
-  simpleEval : StateT (Maybe DbTerm) IO ()
-  simpleEval = do input <- lift getLine
-                  if input == ""
-                     then usePrevInput
-                     else handleNewInput input
+  smallEval : StateT (Maybe DbTerm) IO ()
+  smallEval = do input <- lift getLine
+                 if input == ""
+                    then usePrevInput
+                    else handleNewInput input
 
 eval : IO ()
-eval = map fst $ runStateT simpleEval Nothing
+eval = map fst $ runStateT smallEval Nothing
+
+bigEval : Fuel -> DbTerm -> DbTerm
+bigEval Dry t = t
+bigEval (More f) t = case decNormal t of
+                          (Yes prf) => t
+                          (No contra) => let t' = evaluate [] t contra in
+                                             bigEval f t'
+
+parseAndRun : String -> Either String String
+parseAndRun str =
+  do t <- parse program str
+     dt <- toDbTerm [] t
+     ty <- findType [] dt
+     let dt = bigEval (limit 10000000) dt
+     t <- toTerm [] dt
+     pure $ show t ++ " : " ++ show ty
+
+getLines : String -> IO String
+getLines str = do eof <- fEOF stdin
+                  if eof
+                  then pure str
+                  else do line <- getLine
+                          getLines $ str ++ line ++ "\n"
+
+export
+parseStdInAndRun : IO ()
+parseStdInAndRun = do lines <- getLines ""
+                      let Right result = parseAndRun lines
+                      | Left error => putStrLn error
+                      putStrLn result

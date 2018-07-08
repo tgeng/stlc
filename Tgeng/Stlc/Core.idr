@@ -74,7 +74,7 @@ toDbTerm env (App t1 t2) = do dt1 <- toDbTerm env t1
                               dt2 <- toDbTerm env t2
                               Right $ DbApp dt1 dt2
 toDbTerm env (Let name s t) = do ds <- toDbTerm env s
-                                 dt <- toDbTerm ((name, DbVar Z)::env) t
+                                 dt <- toDbTerm ((name, DbVar Z)::(raiseEnv env)) t
                                  Right $ DbLet name ds dt
 toDbTerm env (Num i) = Right $ DbNum i
 toDbTerm env (Binop op t1 t2) = do dt1 <- toDbTerm env t1
@@ -120,6 +120,7 @@ DbBinopNotNormal MkAbs impossible
 dbLetNotNormal : IsNormal (DbLet _ _ _) -> Void
 dbLetNotNormal MkAbs impossible
 
+export
 decNormal : (t: DbTerm) -> Dec (IsNormal t)
 decNormal (DbVar _) = No dbVarNotNormal
 decNormal (DbAbs _ _ _) = Yes MkAbs
