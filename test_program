@@ -2,6 +2,3 @@ let f = \x:Double.\y:Double. x*x + y*y in
 let x = 3 in
 let y = 4 in
 f x y
-
-
-

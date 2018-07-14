@@ -188,10 +188,9 @@ eval = map fst $ runStateT smallEval Nothing
 
 bigEval : Fuel -> DbTerm -> DbTerm
 bigEval Dry t = t
-bigEval (More f) t = case decNormal t of
-                          (Yes prf) => t
-                          (No contra) => let t' = evaluate [] t contra in
-                                             bigEval f t'
+bigEval (More f) t = if isNormal t
+                        then t
+                        else let t' = evaluate [] t in bigEval f t'
 
 parseAndRun : String -> Either String String
 parseAndRun str =
