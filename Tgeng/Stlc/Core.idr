@@ -48,7 +48,7 @@ data Term = Var String
           | Record (SortedMap String Term)
           | RecordProj Term String
           | Variant String Term
-          | VariantCase Term (SortedMap String (String, Term))
+          | VariantMatch Term (SortedMap String (String, Term))
 
 public export
 data DbTerm = DbVar Nat
@@ -60,7 +60,7 @@ data DbTerm = DbVar Nat
           | DbRecord (SortedMap String DbTerm)
           | DbRecordProj DbTerm String
           | DbVariant String DbTerm
-          | DbVariantCase DbTerm (SortedMap String (String, DbTerm))
+          | DbVariantMatch DbTerm (SortedMap String (String, DbTerm))
 
 lookUp : List (String, DbTerm) -> String -> Maybe DbTerm
 lookUp [] name = Nothing
@@ -76,7 +76,7 @@ raise threshold (DbBinop op t1 t2) = DbBinop op (raise threshold t1) (raise thre
 raise threshold (DbRecord m) = DbRecord $ assert_total (map (raise threshold) m)
 raise threshold (DbRecordProj t l) = DbRecordProj (raise threshold t) l
 raise threshold (DbVariant l t) = DbVariant l $ raise threshold t
-raise threshold (DbVariantCase t m) = DbVariantCase (raise threshold t) $ assert_total (map (\(l, t') => (l, raise (S threshold) t')) m)
+raise threshold (DbVariantMatch t m) = DbVariantMatch (raise threshold t) $ assert_total (map (\(l, t') => (l, raise (S threshold) t')) m)
 
 raiseEnv : List (String, DbTerm) -> List (String, DbTerm)
 raiseEnv = map (\(name, dt) => (name, raise Z dt))
@@ -109,13 +109,13 @@ toDbTerm env (Binop op t1 t2) = do dt1 <- toDbTerm env t1
 toDbTerm env (Record m) = map DbRecord $ sequenceSortedMap $ assert_total ((map $ toDbTerm env) m)
 toDbTerm env (RecordProj t l) = map ((flip DbRecordProj) l) $ toDbTerm env t
 toDbTerm env (Variant l t) = map (DbVariant l) $ toDbTerm env t
-toDbTerm env (VariantCase t m) = do dt <- toDbTerm env t
-                                    let m' = assert_total (map convert m)
-                                    dm <- sequenceSortedMap m'
-                                    pure $ DbVariantCase dt dm
-                                 where convert : (String, Term) -> Either String (String, DbTerm)
-                                       convert (l, t) = do dt <- toDbTerm (addNewBindingToEnv l env) t
-                                                           pure (l, dt)
+toDbTerm env (VariantMatch t m) = do dt <- toDbTerm env t
+                                     let m' = assert_total (map convert m)
+                                     dm <- sequenceSortedMap m'
+                                     pure $ DbVariantMatch dt dm
+                                  where convert : (String, Term) -> Either String (String, DbTerm)
+                                        convert (l, t) = do dt <- toDbTerm (addNewBindingToEnv l env) t
+                                                            pure (l, dt)
 
 reduceVar : (contra : LTE k i -> Void) -> DbTerm
 reduceVar {k = Z} contra = void $ contra $ LTEZero
@@ -136,7 +136,7 @@ reduce i (DbBinop op t1 t2) = DbBinop op (reduce i t1) (reduce i t2)
 reduce i (DbRecord m) = DbRecord $ assert_total (map (reduce i) m)
 reduce i (DbRecordProj t l) = DbRecordProj (reduce i t) l
 reduce i (DbVariant l t) = DbVariant l (reduce i t)
-reduce i (DbVariantCase t m) = DbVariantCase (reduce i t) $ assert_total (map (applyToSecond $ assert_total (reduce $ S i))) m
+reduce i (DbVariantMatch t m) = DbVariantMatch (reduce i t) $ assert_total (map (applyToSecond $ assert_total (reduce $ S i))) m
 
 substitute : Nat -> DbTerm -> DbTerm -> DbTerm
 substitute i s dbVar@(DbVar k) = if i == k then s else dbVar
@@ -148,7 +148,7 @@ substitute i s (DbBinop op t1 t2) = DbBinop op (substitute i s t1) (substitute i
 substitute i s (DbRecord m) = DbRecord $ assert_total (map (substitute i s) m)
 substitute i s (DbRecordProj t l) = DbRecordProj (substitute i s t) l
 substitute i s (DbVariant l t) = DbVariant l $ substitute i s t
-substitute i s (DbVariantCase t m) = DbVariantCase (substitute i s t) $ assert_total (map (applyToSecond (substitute (S i) (raise Z s))) m)
+substitute i s (DbVariantMatch t m) = DbVariantMatch (substitute i s t) $ assert_total (map (applyToSecond (substitute (S i) (raise Z s))) m)
 
 export
 isNormal : DbTerm -> Bool
@@ -161,7 +161,7 @@ isNormal (DbBinop _ _ _) = False
 isNormal (DbRecord m) = assert_total (all isNormal $ values m)
 isNormal (DbRecordProj _ _) = False
 isNormal (DbVariant _ t) = isNormal t
-isNormal (DbVariantCase _ _) = False
+isNormal (DbVariantMatch _ _) = False
 
 evaluate_binop : (op : Op) -> DbTerm -> DbTerm -> DbTerm
 evaluate_binop op (DbNum i1) (DbNum i2) =
@@ -200,14 +200,14 @@ evaluate env (DbRecordProj t l) = if isNormal t
                                           _ => t
                                      else DbRecordProj (evaluate env t) l
 evaluate env (DbVariant l t) = DbVariant l $ evaluate env t
-evaluate env (DbVariantCase t m) =
+evaluate env (DbVariantMatch t m) =
   if isNormal t
      then case t of
                (DbVariant l s) => case lookup l m of
                                        Nothing => t
                                        (Just (_, t)) => reduce Z $ substitute Z s t
                _ => t
-     else DbVariantCase (evaluate env t) m
+     else DbVariantMatch (evaluate env t) m
 evaluate _ t = t
 
 export
@@ -249,11 +249,11 @@ toTerm env (DbBinop op dt1 dt2) = do t1 <- toTerm env dt1
 toTerm env (DbRecord m) = map Record $ sequenceSortedMap $ assert_total (map (toTerm env) m)
 toTerm env (DbRecordProj t l) = [| RecordProj (toTerm env t) (pure l) |]
 toTerm env (DbVariant l t) = map (Variant l) $ toTerm env t
-toTerm env (DbVariantCase t m) = [| VariantCase (toTerm env t) (sequenceSortedMap $ assert_total (map convert m)) |]
-                                 where convert : (String, DbTerm) -> Either String (String, Term)
-                                       convert (l, dt) = do let name = findNewName env l
-                                                            t <- toTerm (name :: env) dt
-                                                            pure (l, t)
+toTerm env (DbVariantMatch t m) = [| VariantMatch (toTerm env t) (sequenceSortedMap $ assert_total (map convert m)) |]
+                                  where convert : (String, DbTerm) -> Either String (String, Term)
+                                        convert (l, dt) = do let name = findNewName env l
+                                                             t <- toTerm (name :: env) dt
+                                                             pure (l, t)
 
 export
 findType : List Ty -> DbTerm -> Either String Ty
@@ -282,10 +282,8 @@ findType tys (DbBinop op t1 t2) = do ty1 <- findType tys t1
 findType tys (DbRecord _) = Right TyAny
 findType tys (DbRecordProj t l) = Right TyAny
 findType tys (DbVariant _ _) = Right TyAny
-findType tys (DbVariantCase t m) = Right TyAny
+findType tys (DbVariantMatch t m) = Right TyAny
 
-showPair : (Show a, Show b) => (a, b) -> String
-showPair (a, b) = show a ++ ":" ++ show b
 
 joinString : String -> List String -> String
 joinString s [] = ""
@@ -295,15 +293,17 @@ joinString s (x :: xs) = x ++ s ++ show xs
 export
 Show Term where
   show (Var n) = n
-  show (Abs n t ty) = "\\" ++ n ++ ":" ++ show ty ++ "." ++ show t
-  show (App t1 t2) = "(" ++ show t1 ++ " " ++ show t2 ++ ")"
+  show (Abs n t ty) = "(\\" ++ n ++ ":" ++ show ty ++ "." ++ show t ++ ")"
+  show (App t1 t2) = show t1 ++ " " ++ show t2
   show (Let name s t) = "let " ++ name ++ "=" ++ show s ++ " in " ++ show t
   show (Num i) = show i
   show (Binop op t1 t2) = "(" ++ show t1 ++ show op ++ show t2 ++ ")"
-  show (Record m) = "{" ++ joinString "," (assert_total (map showPair $ toList m)) ++ "}"
+  show (Record m) = "{" ++ joinString "," (assert_total (map showField $ toList m)) ++ "}"
+                    where showField : (String, Term) -> String
+                          showField (l, t) = l ++ ":" ++ show t
   show (RecordProj t l) = show t ++ "." ++ l
-  show (Variant l t) = "<" ++ l ++ ":" ++ show t ++ ">"
-  show (VariantCase t m) = "case " ++ show t ++ " of <" ++ joinString "," (assert_total (map showBranch $ toList m)) ++ ">"
+  show (Variant l t) = "<" ++ l ++ " " ++ show t ++ ">"
+  show (VariantMatch t m) = "match " ++ show t ++ " {" ++ joinString "," (assert_total (map showBranch $ toList m)) ++ "}"
                            where showBranch : (String, (String, Term)) -> String
                                  showBranch (l, (x, t)) = l ++ " " ++ x ++ " => " ++ show t
 

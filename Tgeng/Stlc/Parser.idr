@@ -2,14 +2,18 @@ module Tgeng.Stlc.Parser
 
 import Data.Fuel
 import Data.List
+import Data.SortedMap
 import Tgeng.Stlc.Core
 import Lightyear
 import Lightyear.Strings
 import Lightyear.Char
 import Control.Monad.State
 
+spacesAround  : Parser t -> Parser t
+spacesAround p = spaces *> p <* spaces
+
 keywords : List String
-keywords = ["let", "in"]
+keywords = ["let", "in", "match"]
 
 reserved : String -> Parser ()
 reserved kw = string kw *> requireFailure alphaNum
@@ -78,11 +82,11 @@ primitiveTy = string "Double" *!> pure TyDouble
 mutual
   tyElem : Parser Ty
   tyElem = primitiveTy
-           <|>| (char '(' *> spaces *!> tyExpr <* spaces <* char ')')
+           <|>| (char '(' *!> spacesAround tyExpr <* char ')')
            <?> "tyElem"
 
   tyExpr : Parser Ty
-  tyExpr = do tys <- tyElem `sepBy` (spaces *> string "->" <* spaces)
+  tyExpr = do tys <- tyElem `sepBy` (spacesAround $ string "->" )
               let Just ty = foldr combine Nothing tys
               | Nothing => fail "Not enough type for type expression"
               pure ty
@@ -95,9 +99,9 @@ mutual
   abs : Parser Term
   abs = do char '\\' <* spaces
            i <- commitTo identifier
-           spaces *> char ':' <* spaces
+           spacesAround $ char ':'
            ty <- commitTo tyExpr
-           spaces *> char '.' <* spaces
+           spacesAround $ char '.'
            t <- commitTo expr
            pure $ Abs i t ty
         <?> "abs"
@@ -105,18 +109,61 @@ mutual
   letBinding : Parser Term
   letBinding = do reserved "let"
                   name <- spaces *!> identifier
-                  spaces *> char '='
-                  s <- spaces *!> expr
-                  spaces *> reserved "in"
-                  t <- spaces *!> expr
+                  spacesAround $ char '='
+                  s <- commitTo expr
+                  spacesAround $ reserved "in"
+                  t <- commitTo expr
                   pure $ Let name s t
                <?> "letBinding"
 
+  record_ : Parser Term
+  record_ = map (Record . fromList) $
+              char '{' *!> spacesAround (attribute `sepBy` (spacesAround $ char ',')) <* char '}'
+            where attribute : Parser (String, Term)
+                  attribute = do l <- identifier
+                                 spacesAround $ char ':'
+                                 t <- expr
+                                 pure (l, t)
+
+  variant : Parser Term
+  variant = do char '<'
+               l <- commitTo identifier
+               spaces
+               t <- expr
+               char '>'
+               pure $ Variant l t
+
+  variantMatch : Parser Term
+  variantMatch = do reserved "match" <* spaces
+                    t <- single
+                    spacesAround $ char '{'
+                    branches <- commitTo $ branch `sepBy` spacesAround (char ',')
+                    spaces *> char '}'
+                    pure $ VariantMatch t $ fromList branches
+                 where branch : Parser (String, (String, Term))
+                       branch = do l <- identifier
+                                   spaces
+                                   x <- identifier
+                                   spacesAround $ string "=>"
+                                   t <- expr
+                                   pure (l, (x, t))
+
   group : Parser Term
-  group = char '(' *> spaces *!> expr <* spaces <* char ')' <?> "group"
+  group = char '(' *!> spacesAround expr <* char ')' <?> "group"
+
+  proj : Parser Term
+  proj = do t <- var <|>| record_ <|>| group
+            projections <- many $ char '.' *!> identifier
+            pure $ foldl RecordProj t projections
 
   single : Parser Term
-  single = number <|> var <|>| abs <|>| letBinding <|>| group <?> "single"
+  single = number
+           <|>| proj
+           <|>| abs
+           <|>| letBinding
+           <|>| variant
+           <|>| variantMatch
+           <?> "single"
 
   appExpr : Parser Term
   appExpr = do Just t <- map appTerms (single `sepBy` spaces)
@@ -126,13 +173,13 @@ mutual
 
   level9Expr : Parser Term
   level9Expr = do t <- appExpr
-                  pts <- many $ partialBinop (spaces *> (mul <|> div) <* spaces) appExpr
+                  pts <- many $ partialBinop (spacesAround (mul <|> div)) appExpr
                   pure $ foldl (\t => \pt => pt t) t pts
                <?> "level9Expr"
 
   level8Expr : Parser Term
   level8Expr = do t <- level9Expr
-                  pts <- many $ partialBinop (spaces *> (add <|> sub) <* spaces) level9Expr
+                  pts <- many $ partialBinop (spacesAround (add <|> sub)) level9Expr
                   pure $ foldl (\t => \pt => pt t) t pts
                <?> "level8Expr"
 
