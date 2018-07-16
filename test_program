@@ -1,6 +1,7 @@
 let r1 = <rectangle {
   width 2,
-  height 3
+  height 3,
+  blah 4
 }> in
 let t1 = <triangle {
   width 2,

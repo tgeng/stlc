@@ -35,18 +35,20 @@ Eq Ty where
   (==) _ _ = False
 
 mutual
-  containsAllAndSatisfy : SortedMap String Ty -> SortedMap String Ty -> Bool
-  containsAllAndSatisfy m1 m2 = assert_total (all satisfy (toList m2))
-                                  where satisfy : (String, Ty) -> Bool
-                                        satisfy (l, ty2) = case lookup l m1 of
-                                                               Nothing => False
-                                                               (Just ty1) => isSubType ty1 ty2
+  containsAllLabeledTypes : Bool -> SortedMap String Ty -> SortedMap String Ty -> Bool
+  containsAllLabeledTypes reverse m1 m2 = assert_total (all satisfy (toList m2))
+                                          where satisfy : (String, Ty) -> Bool
+                                                satisfy (l, ty2) = case lookup l m1 of
+                                                                        Nothing => False
+                                                                        (Just ty1) => if reverse
+                                                                                         then isSubType ty2 ty1
+                                                                                         else isSubType ty1 ty2
 
   export
   isSubType : Ty -> Ty -> Bool
   isSubType (TyArrow tyA1 tyA2) (TyArrow tyB1 tyB2) = assert_total $ isSubType tyA2 tyB2 && isSubType tyB1 tyA1
-  isSubType (TyRecord m1) (TyRecord m2) = containsAllAndSatisfy m1 m2
-  isSubType (TyVariant m1) (TyVariant m2) = containsAllAndSatisfy m2 m1
+  isSubType (TyRecord m1) (TyRecord m2) = containsAllLabeledTypes False m1 m2
+  isSubType (TyVariant m1) (TyVariant m2) = containsAllLabeledTypes True m2 m1
   isSubType TyBottom _ = True
   isSubType ty1 ty2 = ty1 == ty2
 
