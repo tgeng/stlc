@@ -1,4 +1,16 @@
-let f = \x:Double.\y:Double. x*x + y*y in
-let x = 3 in
-let y = 4 in
-f x y
+let r1 = <rectangle {
+  width 2,
+  height 3
+}> in
+let t1 = <triangle {
+  width 2,
+  height 3
+}> in
+let area = (\s:<rectangle:{width:Double, height:Double},
+               triangle:{width:Double, height:Double}>.
+               match s {
+                 rectangle s => s.width * s.height,
+                 triangle s => s.width * s.height * 0.5
+               }) in
+area r1 + area t1
+

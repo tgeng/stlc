@@ -47,6 +47,7 @@ mutual
   isSubType (TyArrow tyA1 tyA2) (TyArrow tyB1 tyB2) = assert_total $ isSubType tyA2 tyB2 && isSubType tyB1 tyA1
   isSubType (TyRecord m1) (TyRecord m2) = containsAllAndSatisfy m1 m2
   isSubType (TyVariant m1) (TyVariant m2) = containsAllAndSatisfy m2 m1
+  isSubType TyBottom _ = True
   isSubType ty1 ty2 = ty1 == ty2
 
 joinString : String -> List String -> String
@@ -85,11 +86,11 @@ unionM {m} f m1 m2 = foldlM accumuate m1 (toList m2)
 findSuperType : Ty -> Ty -> Either String Ty
 findSuperType (TyRecord m1) (TyRecord m2) = map TyRecord $ assert_total $ intersectionM findSuperType m1 m2
 findSuperType (TyVariant m1) (TyVariant m2) = map TyRecord $ assert_total $ unionM findSuperType m1 m2
-findSuperType TyBottom ty = Right ty
-findSuperType ty TyBottom = Right ty
-findSuperType TyAny _ = Right TyAny
-findSuperType _ TyAny = Right TyAny
-findSuperType ty1 ty2 = Left $ "No super type for " ++ show ty1 ++ " and " ++ show ty2
+findSuperType ty1 ty2 = if isSubType ty1 ty2
+                           then Right ty2
+                           else if isSubType ty2 ty1
+                                   then Right ty1
+                                   else Left $ "No super type for " ++ show ty1 ++ " and " ++ show ty2
 
 public export
 data Term = Var String
@@ -238,8 +239,8 @@ evaluate env dbApp@(DbApp t1 t2) =
   else DbApp (evaluate env t1) t2
 evaluate env (DbLet name s t) =
   if isNormal s
-  then DbLet name (evaluate env s) t
-  else reduce Z $ substitute Z s t
+  then reduce Z $ substitute Z s t
+  else DbLet name (evaluate env s) t
 evaluate env (DbBinop op t1 t2) =
   if isNormal t1
   then if isNormal t2
