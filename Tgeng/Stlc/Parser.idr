@@ -121,7 +121,7 @@ mutual
               char '{' *!> spacesAround (attribute `sepBy` (spacesAround $ char ',')) <* char '}'
             where attribute : Parser (String, Term)
                   attribute = do l <- identifier
-                                 spacesAround $ char ':'
+                                 spaces
                                  t <- expr
                                  pure (l, t)
 
@@ -133,20 +133,20 @@ mutual
                char '>'
                pure $ Variant l t
 
-  variantMatch : Parser Term
-  variantMatch = do reserved "match" <* spaces
-                    t <- single
-                    spacesAround $ char '{'
-                    branches <- commitTo $ branch `sepBy` spacesAround (char ',')
-                    spaces *> char '}'
-                    pure $ VariantMatch t $ fromList branches
-                 where branch : Parser (String, (String, Term))
-                       branch = do l <- identifier
-                                   spaces
-                                   x <- identifier
-                                   spacesAround $ string "=>"
-                                   t <- expr
-                                   pure (l, (x, t))
+  match : Parser Term
+  match = do reserved "match" <* spaces
+             t <- single
+             spacesAround $ char '{'
+             branches <- commitTo $ branch `sepBy` spacesAround (char ',')
+             spaces *> char '}'
+             pure $ VariantMatch t $ fromList branches
+          where branch : Parser (String, (String, Term))
+                branch = do l <- identifier
+                            spaces
+                            x <- identifier
+                            spacesAround $ string "=>"
+                            t <- expr
+                            pure (l, (x, t))
 
   group : Parser Term
   group = char '(' *!> spacesAround expr <* char ')' <?> "group"
@@ -162,7 +162,7 @@ mutual
            <|>| abs
            <|>| letBinding
            <|>| variant
-           <|>| variantMatch
+           <|>| match
            <?> "single"
 
   appExpr : Parser Term
@@ -217,10 +217,15 @@ mutual
   handleNewInput input = do let Right st = parse program input
                             | Left error => do lift $ putStrLn error
                                                smallEval
-                            lift $ putStrLn $ show st
                             let Right t = toDbTerm [] st
                             | Left error => do lift $ putStrLn error
                                                smallEval
+                            lift $ putStrLn $ "===== the expr is " ++ show st
+                            let eitherTy = findType [] t
+                            let tyMsg = case eitherTy of
+                                             Right ty => show ty
+                                             Left msg => msg
+                            lift $ putStrLn $ show st ++ " : " ++ tyMsg
                             put $ Just t
                             smallEval
 

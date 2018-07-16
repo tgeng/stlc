@@ -19,24 +19,77 @@ Show Op where
 public export
 data Ty = TyArrow Ty Ty
         | TyDouble
-        {- | TyRecord -}
-        {- | TyVariant -}
+        | TyRecord (SortedMap String Ty)
+        | TyVariant (SortedMap String Ty)
+        | TyBottom
         | TyAny
 
 export
 Eq Ty where
   (==) (TyArrow x y) (TyArrow z w) = x==z && y==w
   (==) TyDouble TyDouble = True
+  (==) (TyRecord m1) (TyRecord m2) = assert_total (toList m1 == toList m2)
+  (==) (TyVariant m1) (TyVariant m2) = assert_total (toList m1 == toList m2)
   (==) _ TyAny = True
   (==) TyAny _ = True
   (==) _ _ = False
+
+mutual
+  containsAllAndSatisfy : SortedMap String Ty -> SortedMap String Ty -> Bool
+  containsAllAndSatisfy m1 m2 = assert_total (all satisfy (toList m2))
+                                  where satisfy : (String, Ty) -> Bool
+                                        satisfy (l, ty2) = case lookup l m1 of
+                                                               Nothing => False
+                                                               (Just ty1) => isSubType ty1 ty2
+
+  export
+  isSubType : Ty -> Ty -> Bool
+  isSubType (TyArrow tyA1 tyA2) (TyArrow tyB1 tyB2) = assert_total $ isSubType tyA2 tyB2 && isSubType tyB1 tyA1
+  isSubType (TyRecord m1) (TyRecord m2) = containsAllAndSatisfy m1 m2
+  isSubType (TyVariant m1) (TyVariant m2) = containsAllAndSatisfy m2 m1
+  isSubType ty1 ty2 = ty1 == ty2
+
+joinString : String -> List String -> String
+joinString s [] = ""
+joinString s (x :: []) = x
+joinString s (x :: xs) = x ++ s ++ joinString s xs
+
+showField : Show a => (String, a) -> String
+showField (l, ty) = l ++ ":" ++ show ty
 
 export
 Show Ty where
   show (TyArrow ty1 ty2) = "(" ++ show ty1 ++ "->" ++ show ty2 ++ ")"
   show TyDouble = "Double"
-  show TyAny = "Any"
+  show (TyRecord m) = "{" ++ joinString "," (assert_total (map showField $ toList m)) ++ "}"
+  show (TyVariant m) = "<" ++ joinString "," (assert_total (map showField $ toList m)) ++ ">"
+  show TyBottom = "<Bottom>"
+  show TyAny = "<Any>"
 
+intersectionM : (Ord a, Monad m) => (b -> b -> m b) -> SortedMap a b -> SortedMap a b -> m (SortedMap a b)
+intersectionM {m} f m1 m2 = foldlM accumulate empty (toList m1)
+                        where accumulate : SortedMap a b -> (a, b) -> m (SortedMap a b)
+                              accumulate acc (a, b) = case lookup a m2 of
+                                                           Nothing => pure acc
+                                                           Just b' => do b'' <- f b' b
+                                                                         pure $ insert a b'' acc
+
+unionM : (Monad m) => (b -> b -> m b) -> SortedMap a b -> SortedMap a b -> m (SortedMap a b)
+unionM {m} f m1 m2 = foldlM accumuate m1 (toList m2)
+                     where accumuate : SortedMap a b -> (a, b) -> m (SortedMap a b)
+                           accumuate acc (a, b) = case lookup a m1 of
+                                                       Nothing => pure $ insert a b acc
+                                                       Just b' => do b'' <- f b' b
+                                                                     pure $ insert a b'' acc
+
+findSuperType : Ty -> Ty -> Either String Ty
+findSuperType (TyRecord m1) (TyRecord m2) = map TyRecord $ assert_total $ intersectionM findSuperType m1 m2
+findSuperType (TyVariant m1) (TyVariant m2) = map TyRecord $ assert_total $ unionM findSuperType m1 m2
+findSuperType TyBottom ty = Right ty
+findSuperType ty TyBottom = Right ty
+findSuperType TyAny _ = Right TyAny
+findSuperType _ TyAny = Right TyAny
+findSuperType ty1 ty2 = Left $ "No super type for " ++ show ty1 ++ " and " ++ show ty2
 
 public export
 data Term = Var String
@@ -266,11 +319,11 @@ findType tys (DbAbs _ t ty) = case findType (ty::tys) t of
 findType tys (DbApp t1 t2) = do ty1 <- findType tys t1
                                 ty2 <- findType tys t2
                                 (case ty1 of
-                                      TyArrow ty2' ty3 => if ty2 == ty2'
+                                      TyArrow ty2' ty3 => if isSubType ty2 ty2'
                                                           then Right ty3
                                                           else Left $ "Type mismatch between " ++ show ty2 ++ " and " ++ show ty2'
-                                      TyDouble => Left "Cannot apply to a double"
-                                      TyAny => Right TyAny)
+                                      TyAny => Right TyAny
+                                      _ => Left "Can only apply to Arrow or Any")
 findType tys (DbLet name s t) = do ty1 <- findType tys s
                                    findType (ty1::tys) t
 findType tys (DbNum x) = Right TyDouble
@@ -279,16 +332,27 @@ findType tys (DbBinop op t1 t2) = do ty1 <- findType tys t1
                                      if ty1 == TyDouble && ty2 == TyDouble
                                      then Right TyDouble
                                      else Left $ "Type mismatch for operator " ++ show op
-findType tys (DbRecord _) = Right TyAny
-findType tys (DbRecordProj t l) = Right TyAny
-findType tys (DbVariant _ _) = Right TyAny
-findType tys (DbVariantMatch t m) = Right TyAny
+findType tys (DbRecord m) = map TyRecord $ sequenceSortedMap $ assert_total $ map (findType tys) m
+findType tys (DbRecordProj t l) = do ty <- findType tys t
+                                     case ty of
+                                          (TyRecord m) => case lookup l m of
+                                                               Nothing => Left $ show ty ++ "does not have field " ++ l
+                                                               (Just ty) => Right ty
+                                          _ => Left "Projection can only applied on record."
+findType tys (DbVariant l t) = [| (TyVariant . fromList . (\ty => [(l, ty)])) (findType tys t) |]
+findType tys (DbVariantMatch t bm) = do TyVariant tym <- findType tys t
+                                        | _ => Left "Can only match on variant."
+                                        btys <-  zipMap bm tym
+                                        foldlM findSuperType TyBottom btys
+                                     where zipMap : SortedMap String (String, DbTerm) -> SortedMap String Ty -> Either String (List Ty)
+                                           -- Here we simply allow additional branches that the matched type does not contain
+                                           zipMap bm tym = sequence $ map convert $ toList tym
+                                           where convert : (String, Ty) -> Either String Ty
+                                                 convert (l, ty) = do let Just (_, t) = lookup l bm
+                                                                        | Nothing => Left ("Missing branch for " ++ l)
+                                                                      findType (ty::tys) t
 
 
-joinString : String -> List String -> String
-joinString s [] = ""
-joinString s (x :: []) = x
-joinString s (x :: xs) = x ++ s ++ show xs
 
 export
 Show Term where
@@ -300,7 +364,7 @@ Show Term where
   show (Binop op t1 t2) = "(" ++ show t1 ++ show op ++ show t2 ++ ")"
   show (Record m) = "{" ++ joinString "," (assert_total (map showField $ toList m)) ++ "}"
                     where showField : (String, Term) -> String
-                          showField (l, t) = l ++ ":" ++ show t
+                          showField (l, t) = l ++ " " ++ show t
   show (RecordProj t l) = show t ++ "." ++ l
   show (Variant l t) = "<" ++ l ++ " " ++ show t ++ ">"
   show (VariantMatch t m) = "match " ++ show t ++ " {" ++ joinString "," (assert_total (map showBranch $ toList m)) ++ "}"
