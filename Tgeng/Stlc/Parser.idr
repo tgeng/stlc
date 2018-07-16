@@ -25,6 +25,53 @@ identifier = do name <- map pack $ map (::) letter <*> many (alphaNum <|> char '
                      (No contra) => pure name
              <?> "identifier"
 
+tyDouble : Parser Ty
+tyDouble = string "Double" *!> pure TyDouble
+
+tyBottom : Parser Ty
+tyBottom = string "Bottom" *!> pure TyBottom
+
+tyAny : Parser Ty
+tyAny = string "Any" *!> pure TyAny
+
+mutual
+  tyAttribute : Parser (String, Ty)
+  tyAttribute = do l <- identifier
+                   spacesAround $ char ':'
+                   ty <- tyExpr
+                   pure (l, ty)
+
+  tyRecord : Parser Ty
+  tyRecord = do char '{'
+                attributes <- tyAttribute `sepBy` spacesAround (char ',')
+                char '}'
+                pure $ TyRecord $ fromList attributes
+
+  tyVariant : Parser Ty
+  tyVariant = do char '<'
+                 attributes <- tyAttribute `sepBy` spacesAround (char ',')
+                 char '>'
+                 pure $ TyVariant $ fromList attributes
+
+  tySingle : Parser Ty
+  tySingle = tyDouble
+           <|> tyBottom
+           <|> tyAny
+           <|>| tyRecord
+           <|>| tyVariant
+           <|>| (char '(' *!> spacesAround tyExpr <* char ')')
+           <?> "tySingle"
+
+  tyExpr : Parser Ty
+  tyExpr = do tys <- tySingle `sepBy` (spacesAround $ string "->" )
+              let Just ty = foldr combine Nothing tys
+              | Nothing => fail "Not enough type for type expression"
+              pure ty
+           where combine : Ty -> Maybe Ty -> Maybe Ty
+                 combine ty maybeTy = case maybeTy of
+                                           Nothing => Just ty
+                                           (Just accTy) => Just $ TyArrow ty accTy
+
 appTerms : List Term -> Maybe Term
 appTerms [] = Nothing
 appTerms (x :: []) = Just x
@@ -75,25 +122,6 @@ partialBinop : Parser Op -> Parser Term -> Parser (Term -> Term)
 partialBinop opParser termParser = do op <- opParser
                                       t <- termParser
                                       pure $ \t' => Binop op t' t
-
-primitiveTy : Parser Ty
-primitiveTy = string "Double" *!> pure TyDouble
-
-mutual
-  tyElem : Parser Ty
-  tyElem = primitiveTy
-           <|>| (char '(' *!> spacesAround tyExpr <* char ')')
-           <?> "tyElem"
-
-  tyExpr : Parser Ty
-  tyExpr = do tys <- tyElem `sepBy` (spacesAround $ string "->" )
-              let Just ty = foldr combine Nothing tys
-              | Nothing => fail "Not enough type for type expression"
-              pure ty
-           where combine : Ty -> Maybe Ty -> Maybe Ty
-                 combine ty maybeTy = case maybeTy of
-                                           Nothing => Just ty
-                                           (Just accTy) => Just $ TyArrow ty accTy
 
 mutual
   abs : Parser Term
@@ -220,7 +248,6 @@ mutual
                             let Right t = toDbTerm [] st
                             | Left error => do lift $ putStrLn error
                                                smallEval
-                            lift $ putStrLn $ "===== the expr is " ++ show st
                             let eitherTy = findType [] t
                             let tyMsg = case eitherTy of
                                              Right ty => show ty

@@ -63,8 +63,8 @@ Show Ty where
   show TyDouble = "Double"
   show (TyRecord m) = "{" ++ joinString "," (assert_total (map showField $ toList m)) ++ "}"
   show (TyVariant m) = "<" ++ joinString "," (assert_total (map showField $ toList m)) ++ ">"
-  show TyBottom = "<Bottom>"
-  show TyAny = "<Any>"
+  show TyBottom = "Bottom"
+  show TyAny = "Any"
 
 intersectionM : (Ord a, Monad m) => (b -> b -> m b) -> SortedMap a b -> SortedMap a b -> m (SortedMap a b)
 intersectionM {m} f m1 m2 = foldlM accumulate empty (toList m1)
