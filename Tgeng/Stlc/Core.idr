@@ -99,6 +99,7 @@ data Term = Var String
           | Abs String Term Ty
           | App Term Term
           | Let String Term Term
+          | Fix String Ty Term
           | Num Double
           | Binop Op Term Term
           | Record (SortedMap String Term)
@@ -111,6 +112,7 @@ data DbTerm = DbVar Nat
           | DbAbs String DbTerm Ty
           | DbApp DbTerm DbTerm
           | DbLet String DbTerm DbTerm
+          | DbFix String Ty DbTerm
           | DbNum Double
           | DbBinop Op DbTerm DbTerm
           | DbRecord (SortedMap String DbTerm)
@@ -127,6 +129,7 @@ raise threshold dbVar@(DbVar i) = if i >= threshold then DbVar (S i) else dbVar
 raise threshold (DbAbs str t ty) = DbAbs str (raise (S threshold) t) ty
 raise threshold (DbApp t1 t2) = DbApp (raise threshold t1) (raise threshold t2)
 raise threshold (DbLet name s t) = DbLet name (raise threshold s) (raise (S threshold) t)
+raise threshold (DbFix name ty t) = DbFix name ty (raise (S threshold) t)
 raise threshold dbNum@(DbNum i) = dbNum
 raise threshold (DbBinop op t1 t2) = DbBinop op (raise threshold t1) (raise threshold t2)
 raise threshold (DbRecord m) = DbRecord $ assert_total (map (raise threshold) m)
@@ -158,6 +161,8 @@ toDbTerm env (App t1 t2) = do dt1 <- toDbTerm env t1
 toDbTerm env (Let name s t) = do ds <- toDbTerm env s
                                  dt <- toDbTerm (addNewBindingToEnv name env) t
                                  Right $ DbLet name ds dt
+toDbTerm env (Fix name ty t) = do dt <- toDbTerm (addNewBindingToEnv name env) t
+                                  Right $ DbFix name ty dt
 toDbTerm env (Num i) = Right $ DbNum i
 toDbTerm env (Binop op t1 t2) = do dt1 <- toDbTerm env t1
                                    dt2 <- toDbTerm env t2
@@ -187,6 +192,7 @@ reduce i dbVar@(DbVar k) = case decideLTE k i of
 reduce i (DbAbs str t ty) = DbAbs str (reduce (S i) t) ty
 reduce i (DbApp t1 t2) = DbApp (reduce i t1) (reduce i t2)
 reduce i (DbLet name s t) = DbLet name (reduce i s) (reduce (S i) t)
+reduce i (DbFix name ty t) = DbFix name ty (reduce (S i) t)
 reduce i dbNum@(DbNum _) = dbNum
 reduce i (DbBinop op t1 t2) = DbBinop op (reduce i t1) (reduce i t2)
 reduce i (DbRecord m) = DbRecord $ assert_total (map (reduce i) m)
@@ -199,6 +205,7 @@ substitute i s dbVar@(DbVar k) = if i == k then s else dbVar
 substitute i s (DbAbs str t ty) = DbAbs str (substitute (S i) (raise Z s) t) ty
 substitute i s (DbApp t1 t2) = DbApp (substitute i s t1) (substitute i s t2)
 substitute i s (DbLet name s' t) = DbLet name (substitute i s s') (substitute (S i) (raise Z s) t)
+substitute i s (DbFix name ty t) = DbFix name ty (substitute (S i) (raise Z s) t)
 substitute i s dbNum@(DbNum _) = dbNum
 substitute i s (DbBinop op t1 t2) = DbBinop op (substitute i s t1) (substitute i s t2)
 substitute i s (DbRecord m) = DbRecord $ assert_total (map (substitute i s) m)
@@ -212,6 +219,7 @@ isNormal (DbVar _) = False
 isNormal (DbAbs _ _ _) = True
 isNormal (DbApp _ _) = False
 isNormal (DbLet _ _ _) = False
+isNormal (DbFix _ _ _) = False
 isNormal (DbNum _) = True
 isNormal (DbBinop _ _ _) = False
 isNormal (DbRecord m) = assert_total (all isNormal $ values m)
@@ -243,6 +251,7 @@ evaluate env (DbLet name s t) =
   if isNormal s
   then reduce Z $ substitute Z s t
   else DbLet name (evaluate env s) t
+evaluate env f@(DbFix name ty t) = reduce Z $ substitute Z f t
 evaluate env (DbBinop op t1 t2) =
   if isNormal t1
   then if isNormal t2
@@ -298,6 +307,8 @@ toTerm env (DbApp dt1 dt2) = do t1 <- toTerm env dt1
 toTerm env (DbLet name ds dt) = do s <- toTerm env ds
                                    t <- toTerm (name::env) dt
                                    Right $ Let name s t
+toTerm env (DbFix name ty dt) = do t <- toTerm (name::env) dt
+                                   Right $ Fix name ty t
 toTerm env (DbNum i) = Right $ Num i
 toTerm env (DbBinop op dt1 dt2) = do t1 <- toTerm env dt1
                                      t2 <- toTerm env dt2
@@ -329,6 +340,10 @@ findType tys (DbApp t1 t2) = do ty1 <- findType tys t1
                                       _ => Left "Can only apply to Arrow or Any")
 findType tys (DbLet name s t) = do ty1 <- findType tys s
                                    findType (ty1::tys) t
+findType tys (DbFix name ty t) = do ty' <- findType (ty::tys) t
+                                    if ty' == ty
+                                       then Right ty
+                                       else Left "Encountered 'fix' with self contradictory type."
 findType tys (DbNum x) = Right TyDouble
 findType tys (DbBinop op t1 t2) = do ty1 <- findType tys t1
                                      ty2 <- findType tys t2
@@ -363,6 +378,7 @@ Show Term where
   show (Abs n t ty) = "(\\" ++ n ++ ":" ++ show ty ++ "." ++ show t ++ ")"
   show (App t1 t2) = show t1 ++ " " ++ show t2
   show (Let name s t) = "let " ++ name ++ "=" ++ show s ++ " in " ++ show t
+  show (Fix name ty t) = "fix " ++ name ++ ":" ++ show ty ++ "." ++ show t
   show (Num i) = show i
   show (Binop op t1 t2) = "(" ++ show t1 ++ show op ++ show t2 ++ ")"
   show (Record m) = "{" ++ joinString "," (assert_total (map showField $ toList m)) ++ "}"

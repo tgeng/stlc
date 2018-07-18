@@ -13,7 +13,7 @@ spacesAround  : Parser t -> Parser t
 spacesAround p = spaces *> p <* spaces
 
 keywords : List String
-keywords = ["let", "in", "match"]
+keywords = ["let", "in", "letrec", "match", "fix"]
 
 reserved : String -> Parser ()
 reserved kw = string kw *> requireFailure alphaNum
@@ -143,6 +143,26 @@ mutual
                   t <- commitTo expr
                   pure $ Let name s t
                <?> "letBinding"
+  fix : Parser Term
+  fix = do reserved "fix"
+           name <- spaces *!> identifier
+           spacesAround $ char ':'
+           ty <- tyExpr
+           spacesAround $ char '.'
+           t <- commitTo expr
+           pure $ Fix name ty t
+
+  letrecBinding : Parser Term
+  letrecBinding = do reserved "letrec"
+                     name <- spaces *!> identifier
+                     spacesAround $ char ':'
+                     ty <- commitTo tyExpr
+                     spacesAround $ char '='
+                     s <- commitTo expr
+                     spacesAround $ reserved "in"
+                     t <- commitTo expr
+                     pure $ Let name (Fix name ty s) t
+
 
   record_ : Parser Term
   record_ = map (Record . fromList) $
@@ -189,6 +209,8 @@ mutual
            <|>| proj
            <|>| abs
            <|>| letBinding
+           <|>| fix
+           <|>| letrecBinding
            <|>| variant
            <|>| match
            <?> "single"
