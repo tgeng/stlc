@@ -1,0 +1,7 @@
+letrec factorial:Integer -> Integer = \n:Integer.
+  match (n == 1) {
+    true => 1,
+    false => n * factorial (n - 1)
+  } in
+factorial 5
+
