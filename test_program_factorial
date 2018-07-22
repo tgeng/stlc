@@ -3,5 +3,5 @@ letrec factorial:Integer -> Integer = \n:Integer.
     true => 1,
     false => n * factorial (n - 1)
   } in
-factorial 5
+factorial 10
 
