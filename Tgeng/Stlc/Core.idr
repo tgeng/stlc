@@ -20,6 +20,14 @@ Show Op where
   show Or = "||"
 
 public export
+data Mod = Not | Negate
+
+export
+Show Mod where
+  show Not = "!"
+  show Negate = "-"
+
+public export
 data PrimTy = PrimTyBool | PrimTyInteger | PrimTyDouble | PrimTyString
 
 export
@@ -139,7 +147,7 @@ Ord PrimVal where
 
 export
 Show PrimVal where
-  show (PrimValBool b) = show b
+  show (PrimValBool b) = toLower $ show b
   show (PrimValInteger i) = show i
   show (PrimValDouble d) = show d ++ "D"
   show (PrimValString s) = show s
@@ -158,6 +166,7 @@ data Term = Var String
           | Fix String Ty Term
           | Prim PrimVal
           | Binop Op Term Term
+          | Modop Mod Term
           | Record (SortedMap String Term)
           | RecordProj Term String
           | Variant String Term
@@ -172,6 +181,7 @@ data DbTerm = DbVar Nat
           | DbFix String Ty DbTerm
           | DbPrim PrimVal
           | DbBinop Op DbTerm DbTerm
+          | DbModop Mod DbTerm
           | DbRecord (SortedMap String DbTerm)
           | DbRecordProj DbTerm String
           | DbVariant String DbTerm
@@ -225,6 +235,7 @@ toDbTerm env (Prim pv) = Right $ DbPrim pv
 toDbTerm env (Binop op t1 t2) = do dt1 <- toDbTerm env t1
                                    dt2 <- toDbTerm env t2
                                    Right $ DbBinop op dt1 dt2
+toDbTerm env (Modop mod t) = map (DbModop mod) (toDbTerm env t)
 toDbTerm env (Record m) = map DbRecord $ sequenceSortedMap $ assert_total ((map $ toDbTerm env) m)
 toDbTerm env (RecordProj t l) = map ((flip DbRecordProj) l) $ toDbTerm env t
 toDbTerm env (Variant l t) = map (DbVariant l) $ toDbTerm env t
@@ -260,6 +271,7 @@ reduce i (DbRecord m) = DbRecord $ assert_total (map (reduce i) m)
 reduce i (DbRecordProj t l) = DbRecordProj (reduce i t) l
 reduce i (DbVariant l t) = DbVariant l (reduce i t)
 reduce i (DbVariantMatch t m) = DbVariantMatch (reduce i t) $ assert_total (map (applyToSecond $ assert_total (reduce $ S i))) m
+reduce i (DbPrimMatch t m) = DbPrimMatch (reduce i t) $ assert_total $ map (reduce i) m
 reduce i t = t
 
 substitute : Nat -> DbTerm -> DbTerm -> DbTerm
@@ -273,6 +285,7 @@ substitute i s (DbRecord m) = DbRecord $ assert_total (map (substitute i s) m)
 substitute i s (DbRecordProj t l) = DbRecordProj (substitute i s t) l
 substitute i s (DbVariant l t) = DbVariant l $ substitute i s t
 substitute i s (DbVariantMatch t m) = DbVariantMatch (substitute i s t) $ assert_total (map (applyToSecond (substitute (S i) (raise Z s))) m)
+substitute i s (DbPrimMatch t m) = DbPrimMatch (substitute i s t) $ assert_total $ map (substitute i s) m
 substitute i s t = t
 
 export
@@ -349,6 +362,14 @@ evaluate env (DbBinop op t1 t2) =
        then evaluateBinop op t1 t2
        else DbBinop op t1 (evaluate env t2)
   else DbBinop op (evaluate env t1) t2
+evaluate env ori@(DbModop mod t) =
+  if isNormal t
+     then case (mod, t) of
+               (Not, (DbPrim (PrimValBool b))) => DbPrim $ PrimValBool $ not b
+               (Negate, (DbPrim (PrimValInteger i))) => DbPrim $ PrimValInteger $ -i
+               (Negate, (DbPrim (PrimValDouble d))) => DbPrim $ PrimValDouble $ -d
+               _ => ori
+     else DbModop mod (evaluate env t)
 evaluate env (DbRecord m) = DbRecord $ assert_total (map (evaluate env) m)
 evaluate env (DbRecordProj t l) = if isNormal t
                                      then case t of
@@ -395,7 +416,7 @@ findNewName names name =
 export
 toTerm : List String -> DbTerm -> Either String Term
 toTerm env (DbVar k) = case index' k env of
-                            Nothing => Left ("Index " ++ (show k) ++ " cannot be found.")
+                            Nothing => Left ("Index " ++ (show k) ++ " cannot be found in env " ++ show env)
                             (Just name) => Right $ Var name
 toTerm env (DbAbs str dt ty) = do let name = findNewName env str
                                   subTerm <- (toTerm (name :: env) dt)
@@ -412,6 +433,7 @@ toTerm env (DbPrim pv) = Right $ Prim pv
 toTerm env (DbBinop op dt1 dt2) = do t1 <- toTerm env dt1
                                      t2 <- toTerm env dt2
                                      Right $ Binop op t1 t2
+toTerm env (DbModop mod dt) = map (Modop mod) (toTerm env dt)
 toTerm env (DbRecord m) = map Record $ sequenceSortedMap $ assert_total (map (toTerm env) m)
 toTerm env (DbRecordProj t l) = [| RecordProj (toTerm env t) (pure l) |]
 toTerm env (DbVariant l t) = map (Variant l) $ toTerm env t
@@ -469,6 +491,13 @@ findType tys (DbVariantMatch t bm) = do TyVariant tym <- findType tys t
                                                  convert (l, ty) = do let Just (_, t) = lookup l bm
                                                                         | Nothing => Left ("Missing branch for " ++ l)
                                                                       findType (ty::tys) t
+findType tys (DbModop mod t) = do ty <- findType tys t
+                                  case (mod, ty) of
+                                       (Not, (TyPrimitive PrimTyBool)) => Right ty
+                                       (Negate, (TyPrimitive PrimTyInteger)) => Right ty
+                                       (Negate, (TyPrimitive PrimTyDouble)) => Right ty
+                                       _ => Left $ "Cannot negate " ++ show ty
+
 findType tys (DbPrimMatch t bm) = do TyPrimitive pty <- findType tys t
                                      | _ => Left "Expect to match primitive"
                                      _ <- allTheSame pty $ map findPrimType (keys bm)
@@ -490,6 +519,7 @@ Show Term where
   show (Fix name ty t) = "fix " ++ name ++ ":" ++ show ty ++ "." ++ show t
   show (Prim pv) = show pv
   show (Binop op t1 t2) = "(" ++ show t1 ++ show op ++ show t2 ++ ")"
+  show (Modop mod t) = show mod ++ show t
   show (Record m) = "{" ++ joinString "," (assert_total (map showField $ toList m)) ++ "}"
                     where showField : (String, Term) -> String
                           showField (l, t) = l ++ " " ++ show t

@@ -177,6 +177,12 @@ and = string "&&" *!> pure And
 or : Parser Op
 or = string "||" *!> pure Or
 
+parseNot : Parser Mod
+parseNot = char '!' *!> pure Not
+
+parseNegate : Parser Mod
+parseNegate = char '-' *!> pure Negate
+
 var : Parser Term
 var = map Var identifier <?> "var"
 
@@ -296,13 +302,21 @@ mutual
            <?> "single"
 
   appExpr : Parser Term
-  appExpr = do Just t <- map appTerms (single `sepBy` spaces)
+  appExpr = do Just t <- map appTerms (single `sepBy` some space)
                | Nothing => fail "not enough term to form an expression"
                pure t
             <?> "appExpr"
 
+  modExpr : Parser Term
+  modExpr = do m <- opt (parseNot <|> parseNegate)
+               spaces
+               t <- commitTo appExpr
+               case m of
+                    Just m' => pure $ Modop m' t
+                    Nothing => pure t
+
   level9Expr : Parser Term
-  level9Expr = levelXExpr 9 (mul <|> div) appExpr
+  level9Expr = levelXExpr 9 (mul <|> div) modExpr
 
   level8Expr : Parser Term
   level8Expr = levelXExpr 8 (add <|> sub) level9Expr
