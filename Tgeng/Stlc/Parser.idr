@@ -13,7 +13,7 @@ spacesAround  : Parser t -> Parser t
 spacesAround p = spaces *> p <* spaces
 
 keywords : List String
-keywords = ["let", "in", "letrec", "match", "fix"]
+keywords = ["let", "in", "letrec", "match", "fix", "true", "false"]
 
 reserved : String -> Parser ()
 reserved kw = string kw *> requireFailure alphaNum
@@ -25,14 +25,17 @@ identifier = do name <- map pack $ map (::) letter <*> many (alphaNum <|> char '
                      (No contra) => pure name
              <?> "identifier"
 
-tyDouble : Parser Ty
-tyDouble = string "Double" *!> pure TyDouble
+tyPrimitive : Parser Ty
+tyPrimitive = reserved "Bool" *> pure (TyPrimitive PrimTyBool)
+         <|> reserved "Integer" *> pure (TyPrimitive PrimTyInteger)
+         <|> reserved "Double" *> pure (TyPrimitive PrimTyDouble)
+         <|> reserved "String" *> pure (TyPrimitive PrimTyString)
 
 tyBottom : Parser Ty
-tyBottom = string "Bottom" *!> pure TyBottom
+tyBottom = reserved "Bottom" *!> pure TyBottom
 
 tyAny : Parser Ty
-tyAny = string "Any" *!> pure TyAny
+tyAny = reserved "Any" *!> pure TyAny
 
 mutual
   tyAttribute : Parser (String, Ty)
@@ -54,7 +57,7 @@ mutual
                  pure $ TyVariant $ fromList attributes
 
   tySingle : Parser Ty
-  tySingle = tyDouble
+  tySingle = tyPrimitive
            <|> tyBottom
            <|> tyAny
            <|>| tyRecord
@@ -78,6 +81,11 @@ appTerms (x :: []) = Just x
 appTerms (x :: (y :: xs)) = do let t = App x y
                                appTerms (t :: xs)
 
+parseBool : Parser Bool
+parseBool = reserved "true" *> pure True
+            <|> reserved "false" *> pure False
+
+-- double parser --
 record Scientific where
   constructor MkScientific
   coefficient : Integer
@@ -100,8 +108,53 @@ parseScientific = do sign <- maybe 1 (const (-1)) `map` opt (char '-')
   where fromDigits : List (Fin 10) -> Integer
         fromDigits = foldl (\a, b => 10 * a + cast b) 0
 
-number : Parser Term
-number = map (Num . scientificToDouble) parseScientific
+-- string parser --
+hex : Parser Int
+hex = do
+  c <- map (ord . toUpper) $ satisfy isHexDigit
+  pure $ if c >= ord '0' && c <= ord '9' then c - ord '0'
+                                         else 10 + c - ord 'A'
+
+hexQuad : Parser Int
+hexQuad = do
+  a <- hex
+  b <- hex
+  c <- hex
+  d <- hex
+  pure $ a * 4096 + b * 256 + c * 16 + d
+
+specialChar : Parser Char
+specialChar = do
+  c <- anyChar
+  case c of
+    '"'  => pure '"'
+    '\\' => pure '\\'
+    '/'  => pure '/'
+    'b'  => pure '\b'
+    'f'  => pure '\f'
+    'n'  => pure '\n'
+    'r'  => pure '\r'
+    't'  => pure '\t'
+    'u'  => map chr hexQuad
+    _    => fail "expected special char"
+
+parseString' : Parser (List Char)
+parseString' = (char '"' *!> pure Prelude.List.Nil) <|> do
+  c <- satisfy (/= '"')
+  if (c == '\\') then map (::) specialChar <*> parseString'
+                 else map (c ::) parseString'
+
+parseString : Parser String
+parseString = char '"' *> map pack parseString' <?> "JSON string"
+
+primVal : Parser PrimVal
+primVal = map PrimValBool (parseBool)
+          <|> map (PrimValDouble . scientificToDouble) parseScientific <* oneOf "dD"
+          <|> map PrimValInteger integer
+          <|> map PrimValString parseString
+
+primitive : Parser Term
+primitive = map Prim primVal
 
 add : Parser Op
 add = char '+' *!> pure Add
@@ -115,6 +168,15 @@ mul = char '*' *!> pure Mul
 div : Parser Op
 div = char '/' *!> pure Div
 
+equal : Parser Op
+equal = string "==" *!> pure Equal
+
+and : Parser Op
+and = string "&&" *!> pure And
+
+or : Parser Op
+or = string "||" *!> pure Or
+
 var : Parser Term
 var = map Var identifier <?> "var"
 
@@ -123,6 +185,11 @@ partialBinop opParser termParser = do op <- opParser
                                       t <- termParser
                                       pure $ \t' => Binop op t' t
 
+levelXExpr : Nat -> Parser Op -> Parser Term -> Parser Term
+levelXExpr n opParser tParser = do t <- tParser
+                                   pts <- many $ partialBinop (spacesAround opParser) tParser
+                                   pure $ foldl (\t => \pt => pt t) t pts
+                                <?> ("level" ++ show n ++ "Expr")
 mutual
   abs : Parser Term
   abs = do char '\\' <* spaces
@@ -181,20 +248,33 @@ mutual
                char '>'
                pure $ Variant l t
 
+  variantMatch : Term -> Parser Term
+  variantMatch t = do firstBranch <- branch
+                      branches <- many (spacesAround (char ',') *!> branch)
+                      pure $ VariantMatch t $ fromList (firstBranch :: branches)
+                   where branch : Parser (String, (String, Term))
+                         branch = do l <- identifier
+                                     spaces
+                                     x <- identifier
+                                     spacesAround $ string "=>"
+                                     t <- expr
+                                     pure (l, (x, t))
+
+  primitiveMatch : Term -> Parser Term
+  primitiveMatch t = do firstBranch <- branch
+                        branches <- many (spacesAround (char ',') *!> branch)
+                        pure $ PrimMatch t $ fromList (firstBranch :: branches)
+                     where branch : Parser (PrimVal, Term)
+                           branch = do pv <- primVal
+                                       spacesAround $ string "=>"
+                                       t <- expr
+                                       pure (pv, t)
+
   match : Parser Term
   match = do reserved "match" <* spaces
              t <- single
              spacesAround $ char '{'
-             branches <- commitTo $ branch `sepBy` spacesAround (char ',')
-             spaces *> char '}'
-             pure $ VariantMatch t $ fromList branches
-          where branch : Parser (String, (String, Term))
-                branch = do l <- identifier
-                            spaces
-                            x <- identifier
-                            spacesAround $ string "=>"
-                            t <- expr
-                            pure (l, (x, t))
+             (primitiveMatch t <|> variantMatch t) <* spaces <* char '}'
 
   group : Parser Term
   group = char '(' *!> spacesAround expr <* char ')' <?> "group"
@@ -205,7 +285,7 @@ mutual
             pure $ foldl RecordProj t projections
 
   single : Parser Term
-  single = number
+  single = primitive
            <|>| proj
            <|>| abs
            <|>| letBinding
@@ -222,19 +302,22 @@ mutual
             <?> "appExpr"
 
   level9Expr : Parser Term
-  level9Expr = do t <- appExpr
-                  pts <- many $ partialBinop (spacesAround (mul <|> div)) appExpr
-                  pure $ foldl (\t => \pt => pt t) t pts
-               <?> "level9Expr"
+  level9Expr = levelXExpr 9 (mul <|> div) appExpr
 
   level8Expr : Parser Term
-  level8Expr = do t <- level9Expr
-                  pts <- many $ partialBinop (spacesAround (add <|> sub)) level9Expr
-                  pure $ foldl (\t => \pt => pt t) t pts
-               <?> "level8Expr"
+  level8Expr = levelXExpr 8 (add <|> sub) level9Expr
+
+  level6Expr : Parser Term
+  level6Expr = levelXExpr 6 equal level8Expr
+
+  level5Expr : Parser Term
+  level5Expr = levelXExpr 5 and level6Expr
+
+  level4Expr : Parser Term
+  level4Expr = levelXExpr 4 or level5Expr
 
   expr : Parser Term
-  expr = level8Expr <?> "expr"
+  expr = level4Expr <?> "expr"
 
 program : Parser Term
 program = expr <* spaces <* eof
